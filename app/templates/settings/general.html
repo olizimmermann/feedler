@@ -73,13 +73,25 @@
 <section class="panel">
   <h2>Usage <span class="muted">(last 30 days)</span></h2>
   {% if usage %}
-  <table class="table">
+  <div class="table-wrap"><table class="table">
     <thead><tr><th>Provider</th><th>Model</th><th>Purpose</th><th class="right">Calls</th><th class="right">Tokens in</th><th class="right">Tokens out</th><th class="right">Failed</th></tr></thead>
     <tbody>{% for provider, model, purpose, calls, tin, tout, failed in usage %}
       <tr><td>{{ provider }}</td><td class="mono small">{{ model }}</td><td>{{ purpose }}</td><td class="right">{{ calls }}</td>
         <td class="right">{{ '{:,}'.format(tin or 0) }}</td><td class="right">{{ '{:,}'.format(tout or 0) }}</td><td class="right">{{ failed }}</td></tr>
     {% endfor %}</tbody>
-  </table>
+  </table></div>
   {% else %}<p class="muted">No LLM calls yet.</p>{% endif %}
+</section>
+<section class="panel">
+  <h2>Account</h2>
+  <div class="row">
+    <span class="grow">Signed in as <b>{{ user.email }}</b></span>
+    {% if user.is_admin %}<a class="button-link" href="/admin">Admin</a>{% endif %}
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button>Log out</button>
+    </form>
+  </div>
+  <p class="muted small mobile-only">Tip: add Feedler to your home screen (Share → Add to Home Screen) to use it like an app.</p>
 </section>
 {% endblock %}

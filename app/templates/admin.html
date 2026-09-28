@@ -13,7 +13,7 @@
 </section>
 <section class="panel">
   <h2>Users</h2>
-  <table class="table">
+  <div class="table-wrap"><table class="table">
     <thead><tr><th>Email</th><th>Joined</th><th class="right">Sources</th><th class="right">Votes</th><th class="right">Saved</th><th></th></tr></thead>
     <tbody>{% for u, subs, votes, saved in users %}
       <tr>
@@ -28,6 +28,6 @@
         {% endif %}</td>
       </tr>
     {% endfor %}</tbody>
-  </table>
+  </table></div>
 </section>
 {% endblock %}

@@ -14,12 +14,18 @@ from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff
 log = logging.getLogger(__name__)
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_BLOCK_END_RE = re.compile(r"(?i)<br\s*/?>|</(p|div|li|h[1-6]|blockquote|pre|tr)>")
 SHORT_BODY_CHARS = 400
 MAX_EXTRACTIONS_PER_POLL = 10
 
 
-def html_to_text(value: str) -> str:
-    return " ".join(html.unescape(_TAG_RE.sub(" ", value or "")).split())
+def html_to_text(value: str, paragraphs: bool = False) -> str:
+    """Strip tags. With paragraphs=True, block elements become blank-line separated paragraphs."""
+    if not paragraphs:
+        return " ".join(html.unescape(_TAG_RE.sub(" ", value or "")).split())
+    text = html.unescape(_TAG_RE.sub(" ", _BLOCK_END_RE.sub("\n\n", value or "")))
+    blocks = (" ".join(block.split()) for block in re.split(r"\n\s*\n", text))
+    return "\n\n".join(b for b in blocks if b)
 
 
 class RSSFetcher:
@@ -88,7 +94,7 @@ def parse_entry(e, feed_url: str) -> FetchedItem | None:
     body = ""
     if e.get("content"):
         body = max((c.get("value", "") for c in e.content), key=len)
-    body = html_to_text(body or e.get("summary", ""))
+    body = html_to_text(body or e.get("summary", ""), paragraphs=True)
 
     ts = e.get("published_parsed") or e.get("updated_parsed")
     published = datetime.fromtimestamp(calendar.timegm(ts), tz=UTC) if ts else datetime.now(UTC)

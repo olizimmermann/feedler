@@ -1,5 +1,5 @@
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -110,3 +110,65 @@ async def test_registration_can_be_closed(client_factory):
     token = await csrf(other, "/login")
     r = await other.post("/register", data={"csrf_token": token, "email": "x@example.com", "password": "password123"})
     assert "Registration is closed" in r.text
+
+
+async def test_reader_flow(client_factory, sessionmaker, monkeypatch):
+    client = await client_factory()
+    token = await register(client, "reader@example.com")
+    await client.post("/settings/sources", data={"csrf_token": token, "value": "r/prusa3d"})
+
+    async def fake_extract(client, url):
+        return "Full article text.\n\nSecond paragraph."
+
+    class FakeReddit:
+        async def fetch_comments_for_reader(self, post_id, permalink, top_n):
+            return "u/helper: Update the firmware, that fixed it"
+
+    monkeypatch.setattr("app.routers.feed.extract_article", fake_extract)
+    monkeypatch.setattr("app.routers.feed.reddit_fetcher", lambda: FakeReddit())
+
+    async with sessionmaker() as db:
+        user = await db.scalar(select(User).where(User.email == "reader@example.com"))
+        source = await db.scalar(select(Source))
+        ids = []
+        for n, hours in ((1, 1), (2, 2), (3, 3)):
+            item = Item(external_id=f"reddit:t3_{n}", url=f"https://blog.example.com/{n}",
+                        canonical_url=f"https://blog.example.com/{n}",
+                        discussion_url=f"https://www.reddit.com/r/prusa3d/comments/{n}/",
+                        title=f"Post {n}", body="[link post]",
+                        published_at=datetime.now(UTC) - timedelta(hours=hours))
+            db.add(item)
+            await db.flush()
+            db.add(ItemSource(item_id=item.id, source_id=source.id))
+            db.add(Evaluation(item_id=item.id, user_id=user.id, relevance=90, reason="r", summary="s", model="m"))
+            ids.append(item.id)
+        await db.commit()
+
+    # Feed titles open the in-app reader
+    feed = (await client.get("/")).text
+    assert f'href="/items/{ids[0]}?v=feed"' in feed
+
+    reader = await client.get(f"/items/{ids[0]}?v=feed")
+    assert reader.status_code == 200 and "Post 1" in reader.text and "Next unread" in reader.text
+    assert f'hx-get="/items/{ids[0]}/article"' in reader.text
+
+    article = await client.get(f"/items/{ids[0]}/article")
+    assert "Second paragraph." in article.text
+    comments = await client.get(f"/items/{ids[0]}/comments")
+    assert "u/helper" in comments.text and "fixed it" in comments.text
+    async with sessionmaker() as db:
+        item = await db.get(Item, ids[0])
+        assert item.article_text.startswith("Full article") and "helper" in item.comments_text
+
+    # Next unread: older post first, skipping the one being read
+    r = await client.get(f"/items/{ids[0]}/next?v=feed")
+    assert r.status_code == 303 and r.headers["location"] == f"/items/{ids[1]}?v=feed"
+    await client.get(f"/items/{ids[1]}")
+    await client.get(f"/items/{ids[2]}")
+    r = await client.get(f"/items/{ids[2]}/next?v=feed")
+    assert r.headers["location"] == "/?view=feed&caught_up=1"
+
+    # Voting from the reader returns the reader's action bar, not a feed card
+    r = await client.post(f"/items/{ids[0]}/vote", data={"value": 1, "ui": "reader", "view": "feed"},
+                          headers={"X-CSRF-Token": token})
+    assert 'id="reader-actions"' in r.text and "vote up on" in r.text

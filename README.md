@@ -17,7 +17,9 @@ You describe what you want in plain language, for example *"Prusa printer bugs a
 - **Save for later:** save feed items or any URL, with tags and notes. The page text is archived and full-text searchable, so it survives link rot.
 - **Patient when the LLM is busy:** overloads and rate limits pause scoring with growing waits. Unscored posts stay queued, and nothing is lost.
 - **Multi-user:** the first account is the admin, and the admin can close registration. Each user gets a private Atom feed of their filtered posts.
-- **Keyboard shortcuts:** `j`/`k` to move, `u`/`d` to vote, `s` to save, `o` to open, `x` to hide, `?` for help.
+- **Distraction-free reader:** tapping a post opens it in the app: title, AI summary, the post or the extracted article text, and the comments. You don't get bounced to Reddit. **Next unread →** takes you through the feed one post at a time.
+- **Made for phones:** a bottom tab bar, large tap targets and dark mode. Add it to your home screen (Share → *Add to Home Screen*) to use it like a native app, full-screen.
+- **Keyboard shortcuts:** `j`/`k` to move, `Enter` to read, `n` for next unread, `u`/`d` to vote, `s` to save, `o` to open the original, `x` to hide, `?` for help.
 
 ## Quick start
 

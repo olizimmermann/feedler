@@ -1,18 +1,56 @@
 {% extends "base.html" %}
+{% set active_filters = (1 if f.q else 0) + (1 if f.interest else 0) + (1 if f.source else 0) + (1 if f.unread else 0) + (1 if f.sort == 'top' else 0) %}
+{% macro filter_form() %}
+<form method="get" action="/" class="filters stack">
+  <input type="hidden" name="view" value="{{ f.view }}">
+  <input type="search" name="q" value="{{ f.q }}" placeholder="Search posts">
+  <label>Interest
+    <select name="interest"><option value="">All interests</option>
+      {% for i in interests %}<option value="{{ i.id }}" {{ 'selected' if f.interest == i.id }}>{{ i.name }}</option>{% endfor %}
+    </select></label>
+  <label>Source
+    <select name="source"><option value="">All sources</option>
+      {% for s in sources %}<option value="{{ s.id }}" {{ 'selected' if f.source == s.id }}>{{ s.label }}</option>{% endfor %}
+    </select></label>
+  <label>Sort
+    <select name="sort">
+      <option value="new" {{ 'selected' if f.sort == 'new' }}>Newest</option>
+      <option value="top" {{ 'selected' if f.sort == 'top' }}>Most relevant</option>
+    </select></label>
+  <label class="check"><input type="checkbox" name="unread" value="1" {{ 'checked' if f.unread }}> Unread only</label>
+  <div class="row"><button class="primary">Apply</button>{% if active_filters %}<a href="/?view={{ f.view }}" class="small">Reset</a>{% endif %}</div>
+</form>
+<p class="muted small">Threshold {{ user.settings.relevance_threshold }}/100 · <a href="/settings">change</a></p>
+{% endmacro %}
+{% block topbar_actions %}
+<a class="icon-btn" href="{{ request.url.path }}{{ '?' ~ request.url.query if request.url.query }}" title="Refresh" aria-label="Refresh">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></a>
+{% endblock %}
 {% block content %}
 <div class="feed-layout">
   <section class="feed">
+    <div class="tabs-row">
     <div class="tabs">
       {% set base_qs = ('&sort=' ~ f.sort) ~ (('&interest=' ~ f.interest) if f.interest else '') ~ (('&source=' ~ f.source) if f.source else '') ~ ('&unread=1' if f.unread else '') %}
       <a href="/?view=feed{{ base_qs }}" class="{{ 'active' if f.view == 'feed' }}">For you</a>
       <a href="/?view=filtered{{ base_qs }}" class="{{ 'active' if f.view == 'filtered' }}" title="Posts the filter scored below your threshold. Upvote anything it got wrong.">Filtered out</a>
       <a href="/?view=all{{ base_qs }}" class="{{ 'active' if f.view == 'all' }}">All</a>
     </div>
+    <details class="filter-sheet mobile-only">
+      <summary aria-label="Filter and sort">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        {% if active_filters %}<span class="badge">{{ active_filters }}</span>{% endif %}
+      </summary>
+      <div class="filter-sheet-body">{{ filter_form() }}</div>
+    </details>
+    </div>
 
+    {% if request.query_params.get('caught_up') %}
+    <p class="notice ok-notice">You're all caught up. Nothing unread left here.</p>
+    {% endif %}
     {% if llm_paused %}
     <p class="notice">Scoring is paused: <b>{{ llm_paused.key }}</b> is unavailable. Retrying {{ llm_paused.paused_until | until }} (attempt {{ llm_paused.failures }}).
-      {% if pending %}{{ pending }} post{{ 's' if pending != 1 }} queued, nothing is lost.{% endif %}
-      <span class="muted small" title="{{ llm_paused.last_error }}">Details on hover</span></p>
+      {% if pending %}{{ pending }} post{{ 's' if pending != 1 }} queued, nothing is lost.{% endif %}</p>
     {% elif pending %}<p class="notice">{{ pending }} new post{{ 's' if pending != 1 }} waiting to be scored.</p>{% endif %}
 
     <div id="cards">
@@ -28,27 +66,9 @@
     </div>
   </section>
 
-  <aside class="sidebar">
-    <form method="get" action="/" class="filters stack">
-      <input type="hidden" name="view" value="{{ f.view }}">
-      <input type="search" name="q" value="{{ f.q }}" placeholder="Search posts">
-      <label>Interest
-        <select name="interest"><option value="">All interests</option>
-          {% for i in interests %}<option value="{{ i.id }}" {{ 'selected' if f.interest == i.id }}>{{ i.name }}</option>{% endfor %}
-        </select></label>
-      <label>Source
-        <select name="source"><option value="">All sources</option>
-          {% for s in sources %}<option value="{{ s.id }}" {{ 'selected' if f.source == s.id }}>{{ s.label }}</option>{% endfor %}
-        </select></label>
-      <label>Sort
-        <select name="sort">
-          <option value="new" {{ 'selected' if f.sort == 'new' }}>Newest</option>
-          <option value="top" {{ 'selected' if f.sort == 'top' }}>Most relevant</option>
-        </select></label>
-      <label class="check"><input type="checkbox" name="unread" value="1" {{ 'checked' if f.unread }}> Unread only</label>
-      <button>Apply</button>
-    </form>
-    <p class="muted small">Threshold {{ user.settings.relevance_threshold }}/100 · <a href="/settings">change</a></p>
+  <aside class="sidebar desktop-only">
+    <h3>Filter &amp; sort</h3>
+    {{ filter_form() }}
     <p class="muted small">Press <kbd>?</kbd> for keyboard shortcuts.</p>
   </aside>
 </div>

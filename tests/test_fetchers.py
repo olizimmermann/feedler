@@ -93,3 +93,40 @@ def test_classify_prompt_scoping_and_truncation():
     assert '<post id="7" source="r/prusa3d">' in prompt
     assert "(none yet)" in prompt
     assert len(prompt) < 1500
+
+
+def test_reddit_public_comments_rss(fixture_bytes):
+    from app.fetchers.reddit import parse_comments_rss
+
+    lines = parse_comments_rss(fixture_bytes("reddit_comments.rss"), top_n=5).splitlines()
+    assert 1 <= len(lines) <= 5
+    assert all(line.startswith("u/example_user") for line in lines)  # the post itself (t3) is skipped
+
+
+def test_html_to_text_paragraphs():
+    from app.fetchers.rss import html_to_text
+
+    assert html_to_text("<p>One <b>two</b></p><p>Three</p>", paragraphs=True) == "One two\n\nThree"
+    assert html_to_text("<p>One</p><p>Two</p>") == "One Two"
+
+
+def test_reader_kind_and_comment_lines():
+    from datetime import UTC, datetime
+
+    from app.models import Item
+    from app.routers.feed import parse_comment_lines, reader_kind
+
+    def item(url, ext="reddit:t3_x", discussion="https://www.reddit.com/r/a/comments/x/", body=""):
+        return Item(external_id=ext, url=url, canonical_url=url, discussion_url=discussion, title="t",
+                    body=body, published_at=datetime.now(UTC))
+
+    assert reader_kind(item("https://www.reddit.com/r/a/comments/x/")) == "text"
+    assert reader_kind(item("https://i.redd.it/abc.jpeg")) == "image"
+    assert reader_kind(item("https://www.reddit.com/gallery/x")) == "media"
+    assert reader_kind(item("https://blog.example.com/post")) == "article"
+    assert reader_kind(item("https://ex.com/a", ext="rss:1", discussion=None, body="x" * 2000)) == "text"
+    assert reader_kind(item("https://ex.com/a", ext="rss:1", discussion=None, body="teaser")) == "article"
+
+    parsed = parse_comment_lines("[+40] u/a: fixed it\nu/b: same here")
+    assert parsed[0] == {"score": "+40", "author": "a", "text": "fixed it"}
+    assert parsed[1] == {"score": None, "author": "b", "text": "same here"}

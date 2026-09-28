@@ -1,0 +1,13 @@
+{% set item = card.item %}
+<nav class="reader-actions" id="reader-actions" aria-label="Post actions">
+  <button class="vote up {{ 'on' if card.vote == 1 }}" aria-label="More like this"
+          hx-post="/items/{{ item.id }}/vote" hx-vals='{"value": 1, "ui": "reader", "view": "{{ view }}"}'
+          hx-target="#reader-actions" hx-swap="outerHTML">▲</button>
+  <button class="vote down {{ 'on' if card.vote == -1 }}" aria-label="Less like this"
+          hx-post="/items/{{ item.id }}/vote" hx-vals='{"value": -1, "ui": "reader", "view": "{{ view }}"}'
+          hx-target="#reader-actions" hx-swap="outerHTML">▼</button>
+  <button class="{{ 'on' if card.saved }}" data-action="save" aria-label="{{ 'Saved' if card.saved else 'Save' }}"
+          hx-post="/items/{{ item.id }}/save" hx-vals='{"ui": "reader", "view": "{{ view }}"}'
+          hx-target="#reader-actions" hx-swap="outerHTML">{{ '★' if card.saved else '☆' }}</button>
+  <a class="next" href="/items/{{ item.id }}/next?v={{ view }}" data-action="next">Next unread <span aria-hidden="true">→</span></a>
+</nav>

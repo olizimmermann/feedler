@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 PUBLIC_BASE = "https://www.reddit.com"
 OAUTH_BASE = "https://oauth.reddit.com"
-COMMENT_CHAR_LIMIT = 1000
+COMMENT_CHAR_LIMIT = 4000  # the LLM prompt has its own, smaller budget
 
 
 class RedditFetcher:
@@ -71,6 +71,16 @@ class RedditFetcher:
         data = await self._get_json(f"/r/{subreddit}/new", {"limit": 50})
         items = [parse_post(child["data"]) for child in data["data"]["children"] if child.get("kind") == "t3"]
         return FetchResult(items=items)
+
+    async def fetch_comments_for_reader(self, post_id: str, permalink: str, top_n: int) -> str:
+        """Comments for one post a reader just opened: API if configured, else the public RSS."""
+        if self.oauth:
+            return await self.fetch_comments(post_id, top_n)
+        resp = await get_with_backoff(
+            self.client, f"{permalink.rstrip('/')}/.rss", params={"sort": "top", "limit": top_n}, retries=1
+        )
+        resp.raise_for_status()
+        return parse_comments_rss(resp.content, top_n)
 
     async def fetch_comments(self, post_id: str, top_n: int) -> str:
         data = await self._get_json(f"/comments/{post_id}", {"sort": "top", "limit": top_n, "depth": 1})
@@ -130,7 +140,7 @@ def parse_rss(content: bytes) -> list[FetchedItem]:
         link = _LINK_RE.search(html)
         permalink = e.get("link")
         url = link.group(1) if link else permalink
-        body = html_to_text(_TRAILER_RE.sub("", html))
+        body = html_to_text(_TRAILER_RE.sub("", html), paragraphs=True)
         if url != permalink and not body:
             body = f"[link post to {url}]"
         ts = e.get("published_parsed") or e.get("updated_parsed")
@@ -147,3 +157,20 @@ def parse_rss(content: bytes) -> list[FetchedItem]:
             )
         )
     return items
+
+
+def parse_comments_rss(content: bytes, top_n: int) -> str:
+    """Comments from a post's public .rss (no scores; replies are included, flattened)."""
+    lines = []
+    for e in feedparser.parse(content).entries:
+        if not e.get("id", "").startswith("t1_"):
+            continue
+        html = e.content[0].value if e.get("content") else e.get("summary", "")
+        text = html_to_text(html)[:COMMENT_CHAR_LIMIT]
+        if not text or text in ("[deleted]", "[removed]"):
+            continue
+        author = (e.get("author") or "?").removeprefix("/u/")
+        lines.append(f"u/{author}: {text}")
+        if len(lines) >= top_n:
+            break
+    return "\n".join(lines)

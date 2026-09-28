@@ -2,40 +2,68 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="csrf-token" content="{{ csrf }}">
   <title>{% block title %}Feedler{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141412" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Feedler">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
   <script src="/static/htmx.min.js" defer></script>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v={{ asset_v }}" defer></script>
   {% if user %}<link rel="alternate" type="application/atom+xml" title="Feedler" href="/u/{{ user.feed_token }}/feed.xml">{% endif %}
 </head>
-<body hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'>
+<body class="{% block body_class %}{% endblock %}" hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'>
+  {% block topbar %}
   {% if user %}
   <header class="topbar">
     <a class="brand" href="/">feedler</a>
-    <nav>
+    <nav class="desktop-nav">
       <a href="/" class="{{ 'active' if request.url.path == '/' }}">Feed</a>
       <a href="/saved" class="{{ 'active' if request.url.path.startswith('/saved') }}">Saved</a>
       <a href="/settings/sources" class="{{ 'active' if request.url.path.startswith('/settings') }}">Settings</a>
       {% if user.is_admin %}<a href="/admin" class="{{ 'active' if request.url.path.startswith('/admin') }}">Admin</a>{% endif %}
     </nav>
-    <form method="post" action="/logout" class="logout">
+    <span class="grow"></span>
+    {% block topbar_actions %}{% endblock %}
+    <form method="post" action="/logout" class="logout desktop-only">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <button class="link" title="{{ user.email }}">Log out</button>
     </form>
   </header>
   {% endif %}
+  {% endblock %}
   <main class="{% block main_class %}container{% endblock %}">
     {% block content %}{% endblock %}
   </main>
+  {% block bottombar %}
+  {% if user %}
+  <nav class="tabbar" aria-label="Main">
+    <a href="/" class="{{ 'active' if request.url.path == '/' }}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Feed</a>
+    <a href="/saved" class="{{ 'active' if request.url.path.startswith('/saved') }}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>Saved</a>
+    <a href="/settings/sources" class="{{ 'active' if request.url.path.startswith('/settings') or request.url.path.startswith('/admin') }}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Settings</a>
+  </nav>
+  {% endif %}
+  {% endblock %}
   <div id="kbd-help" class="kbd-help" hidden>
     <b>Keyboard</b>
     <span><kbd>j</kbd>/<kbd>k</kbd> next / previous</span>
+    <span><kbd>Enter</kbd> read</span>
     <span><kbd>u</kbd>/<kbd>d</kbd> vote up / down</span>
     <span><kbd>s</kbd> save</span>
-    <span><kbd>o</kbd> open link</span>
+    <span><kbd>o</kbd> open original</span>
     <span><kbd>x</kbd> hide</span>
+    <span><kbd>n</kbd> next unread (in reader)</span>
     <span><kbd>?</kbd> toggle this help</span>
   </div>
 </body>

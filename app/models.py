@@ -122,6 +122,8 @@ class Item(Base):
     comments_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     comments_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     comments_fetch_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Main text of the linked page, extracted on demand for the reader view ("" = extraction failed)
+    article_text: Mapped[str | None] = mapped_column(Text)
     score: Mapped[int | None] = mapped_column(Integer)
     num_comments: Mapped[int | None] = mapped_column(Integer)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)

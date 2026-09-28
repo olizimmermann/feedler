@@ -34,7 +34,7 @@
 <section class="panel">
   <h2>Your sources <span class="muted">({{ sources | length }})</span></h2>
   {% if sources %}
-  <table class="table">
+  <div class="table-wrap"><table class="table">
     <thead><tr><th>Source</th><th>Type</th><th>Last polled</th><th></th></tr></thead>
     <tbody>
     {% for s in sources %}
@@ -52,7 +52,7 @@
       </tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% else %}<p class="muted">No sources yet.</p>{% endif %}
 </section>
 {% endblock %}

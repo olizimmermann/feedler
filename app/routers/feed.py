@@ -1,15 +1,19 @@
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from xml.sax.saxutils import escape, quoteattr
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import and_, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import current_user
 from app.config import get_settings
 from app.db import get_db
+from app.fetchers.article import extract_article
+from app.fetchers.reddit import RedditFetcher
 from app.llm.backoff import user_llm_status
 from app.pipeline.classify import queue_filter
 from app.models import Evaluation, Interest, Item, ItemSource, SavedItem, Subscription, User, UserSettings, Vote
@@ -73,6 +77,13 @@ def card_query(user: User):
 
 
 async def query_feed(db: AsyncSession, user: User, f: FeedFilters, offset: int) -> list[Card]:
+    q = feed_query(user, f)
+    order = [Evaluation.relevance.desc(), Item.published_at.desc()] if f.sort == "top" else [Item.published_at.desc()]
+    rows = (await db.execute(q.order_by(*order).offset(offset).limit(PAGE_SIZE))).all()
+    return await load_cards(db, user, rows)
+
+
+def feed_query(user: User, f: FeedFilters):
     threshold = user.settings.relevance_threshold
     q = card_query(user).where(Evaluation.hidden.is_(False))
     if f.view == "feed":
@@ -87,9 +98,7 @@ async def query_feed(db: AsyncSession, user: User, f: FeedFilters, offset: int) 
         q = q.where(Evaluation.read_at.is_(None))
     if f.q:
         q = q.where(Item.search.op("@@")(func.websearch_to_tsquery("english", f.q)))
-    order = [Evaluation.relevance.desc(), Item.published_at.desc()] if f.sort == "top" else [Item.published_at.desc()]
-    rows = (await db.execute(q.order_by(*order).offset(offset).limit(PAGE_SIZE))).all()
-    return await load_cards(db, user, rows)
+    return q
 
 
 async def get_card(db: AsyncSession, user: User, item_id: int) -> Card:
@@ -123,19 +132,110 @@ async def feed_more(request: Request, offset: int = 0, user: User = Depends(curr
                   next_offset=offset + PAGE_SIZE if len(cards) == PAGE_SIZE else None)
 
 
+IMAGE_RE = re.compile(r"(i\.redd\.it/|i\.imgur\.com/|\.(jpe?g|png|gif|webp)(\?|$))", re.IGNORECASE)
+_reddit: RedditFetcher | None = None
+
+
+def reddit_fetcher() -> RedditFetcher:
+    global _reddit
+    if _reddit is None:
+        _reddit = RedditFetcher(get_settings())
+    return _reddit
+
+
+def reader_kind(item: Item) -> str:
+    """What the reader shows as the main content: the post text, an image, or the linked article."""
+    if item.discussion_url and item.url == item.discussion_url:
+        return "text"
+    if IMAGE_RE.search(item.url):
+        return "image"
+    if "reddit.com/gallery/" in item.url or "v.redd.it/" in item.url:
+        return "media"
+    if not item.external_id.startswith("reddit:") and len(item.body) >= 1500:
+        return "text"  # the feed already carried the full article
+    return "article"
+
+
 @router.get("/items/{item_id}")
-async def item_detail(request: Request, item_id: int, user: User = Depends(current_user),
+async def item_detail(request: Request, item_id: int, v: str = "feed", user: User = Depends(current_user),
                       db: AsyncSession = Depends(get_db)):
     card = await get_card(db, user, item_id)
     if card.ev.read_at is None:
         card.ev.read_at = datetime.now(UTC)
         await db.commit()
-    return render(request, "item.html", card=card)
+    is_reddit = card.item.external_id.startswith("reddit:")
+    return render(request, "item.html", card=card, view=v if v in ("feed", "filtered", "all") else "feed",
+                  kind=reader_kind(card.item), is_reddit=is_reddit)
+
+
+@router.get("/items/{item_id}/article")
+async def item_article(request: Request, item_id: int, user: User = Depends(current_user),
+                       db: AsyncSession = Depends(get_db)):
+    card = await get_card(db, user, item_id)
+    item = card.item
+    if item.article_text is None:
+        async with httpx.AsyncClient(headers={"User-Agent": get_settings().reddit_user_agent}) as client:
+            item.article_text = await extract_article(client, item.url) or ""
+        await db.commit()
+    return render(request, "partials/reader_article.html", card=card)
+
+
+@router.get("/items/{item_id}/comments")
+async def item_comments(request: Request, item_id: int, user: User = Depends(current_user),
+                        db: AsyncSession = Depends(get_db)):
+    card = await get_card(db, user, item_id)
+    item = card.item
+    error = None
+    if item.external_id.startswith("reddit:") and item.discussion_url and not item.comments_text:
+        try:
+            item.comments_text = await reddit_fetcher().fetch_comments_for_reader(
+                item.external_id.removeprefix("reddit:t3_"), item.discussion_url, user.settings.comments_top_n or 10
+            )
+            item.comments_fetched_at = datetime.now(UTC)
+            item.comments_fetch_count = max(item.comments_fetch_count, 1)
+            await db.commit()
+        except httpx.HTTPError:
+            error = "Reddit didn't answer right now. Try again in a minute."
+    return render(request, "partials/reader_comments.html", card=card, comments=parse_comment_lines(item.comments_text),
+                  error=error)
+
+
+def parse_comment_lines(text: str) -> list[dict]:
+    comments = []
+    for line in (text or "").splitlines():
+        m = re.match(r"^(?:\[([+-]?\d+)\] )?u/([^:]+): (.*)$", line)
+        comments.append({"score": m.group(1), "author": m.group(2), "text": m.group(3)} if m
+                        else {"score": None, "author": "", "text": line})
+    return comments
+
+
+@router.get("/items/{item_id}/next")
+async def next_item(item_id: int, v: str = "feed", user: User = Depends(current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """Continue reading: the next unread post in the same list, older first, then wrap to the newest."""
+    f = FeedFilters(view=v if v in ("feed", "filtered", "all") else "feed", unread=True)
+    current = await db.get(Item, item_id)
+    q = feed_query(user, f).where(Item.id != item_id).with_only_columns(Item.id)
+    next_id = None
+    if current:
+        next_id = await db.scalar(
+            q.where(Item.published_at <= current.published_at).order_by(Item.published_at.desc()).limit(1)
+        )
+    next_id = next_id or await db.scalar(q.order_by(Item.published_at.desc()).limit(1))
+    if next_id is None:
+        return RedirectResponse(f"/?view={f.view}&caught_up=1", status_code=303)
+    return RedirectResponse(f"/items/{next_id}?v={f.view}", status_code=303)
+
+
+def card_or_bar(request: Request, card: Card, ui: str, view: str = "feed"):
+    if ui == "reader":
+        return render(request, "partials/reader_actions.html", card=card, view=view)
+    return render(request, "partials/card.html", card=card)
 
 
 @router.post("/items/{item_id}/vote")
-async def vote(request: Request, item_id: int, value: int = Form(...), note: str = Form(""),
-               user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def vote(request: Request, item_id: int, value: int = Form(...), note: str = Form(""), ui: str = Form(""),
+               view: str = Form("feed"), user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
     if value not in (-1, 0, 1):
         raise HTTPException(400)
     existing = await db.get(Vote, (user.id, item_id))
@@ -155,7 +255,7 @@ async def vote(request: Request, item_id: int, value: int = Form(...), note: str
         db.add(Vote(user_id=user.id, item_id=item_id, value=value, note=note.strip() or None))
         us.votes_since_refine += 1
     await db.commit()
-    return render(request, "partials/card.html", card=await get_card(db, user, item_id))
+    return card_or_bar(request, await get_card(db, user, item_id), ui, view)
 
 
 @router.post("/items/{item_id}/read")
@@ -178,8 +278,9 @@ async def hide(item_id: int, user: User = Depends(current_user), db: AsyncSessio
 
 
 @router.post("/items/{item_id}/save")
-async def toggle_save(request: Request, item_id: int, background: BackgroundTasks,
-                      user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def toggle_save(request: Request, item_id: int, background: BackgroundTasks, ui: str = Form(""),
+                      view: str = Form("feed"), user: User = Depends(current_user),
+                      db: AsyncSession = Depends(get_db)):
     item = await db.get(Item, item_id)
     if not item:
         raise HTTPException(404)
@@ -200,7 +301,7 @@ async def toggle_save(request: Request, item_id: int, background: BackgroundTask
             if not is_self_post:
                 background.add_task(archive_saved_item, saved.id, fallback_text=item.body)
     await db.commit()
-    return render(request, "partials/card.html", card=await get_card(db, user, item_id))
+    return card_or_bar(request, await get_card(db, user, item_id), ui, view)
 
 
 @router.get("/u/{token}/feed.xml")

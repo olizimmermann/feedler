@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,6 +9,13 @@ from app.auth import csrf_token
 from app.config import get_settings
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+_STATIC = Path(__file__).parent / "static"
+# Changes whenever the CSS/JS change, so browsers and home-screen apps never run stale assets
+ASSET_VERSION = hashlib.sha256(
+    b"".join((_STATIC / name).read_bytes() for name in ("app.css", "app.js"))
+).hexdigest()[:10]
+templates.env.globals["asset_v"] = ASSET_VERSION
 
 
 def timeago(value: datetime | None) -> str:

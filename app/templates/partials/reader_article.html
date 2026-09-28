@@ -1,0 +1,7 @@
+{% set item = card.item %}
+{% if item.article_text %}
+<div class="prose article">{{ item.article_text }}</div>
+<p class="muted small">Text extracted from <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.url.split('/')[2] if '://' in item.url else item.url }}</a>.</p>
+{% else %}
+<p class="muted">This page's text couldn't be extracted. <a href="{{ item.url }}" target="_blank" rel="noopener">Open the original ↗</a></p>
+{% endif %}

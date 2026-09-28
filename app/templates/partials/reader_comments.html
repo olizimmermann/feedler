@@ -1,0 +1,13 @@
+{% if comments %}
+<ul class="comments">
+  {% for c in comments %}
+  <li>{% if c.author %}<div class="comment-meta"><b>u/{{ c.author }}</b>{% if c.score %} · {{ c.score }}{% endif %}</div>{% endif %}
+    <div class="comment-text">{{ c.text }}</div></li>
+  {% endfor %}
+</ul>
+{% elif error %}
+<p class="muted">{{ error }}
+  <button class="small" hx-get="/items/{{ card.item.id }}/comments" hx-target="closest p" hx-swap="outerHTML">Retry</button></p>
+{% else %}
+<p class="muted">No comments yet.</p>
+{% endif %}

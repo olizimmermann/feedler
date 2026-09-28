@@ -1,20 +1,59 @@
 {% extends "base.html" %}
-{% block title %}{{ card.item.title }} · Feedler{% endblock %}
-{% block content %}
-<p><a href="javascript:history.back()">← Back</a></p>
-<div class="detail">
-  {% include "partials/card.html" %}
-  {% if card.item.body %}
-  <section class="panel">
-    <h3>Post</h3>
-    <div class="prose">{{ card.item.body }}</div>
-  </section>
-  {% endif %}
-  {% if card.item.comments_text %}
-  <section class="panel">
-    <h3>Top comments</h3>
-    <ul class="comments">{% for line in card.item.comments_text.splitlines() %}<li>{{ line }}</li>{% endfor %}</ul>
-  </section>
-  {% endif %}
-</div>
+{% set item = card.item %}{% set ev = card.ev %}
+{% block title %}{{ item.title }} · Feedler{% endblock %}
+{% block body_class %}reader-page{% endblock %}
+{% block topbar %}
+<header class="topbar reader-bar">
+  <a class="icon-btn back-link" href="/?view={{ view }}" aria-label="Back to the feed">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+  <span class="reader-source">{% for s in item.sources %}{{ s.label }}{{ ', ' if not loop.last }}{% endfor %}</span>
+  <a class="icon-btn item-link" href="{{ item.url }}" target="_blank" rel="noopener" data-read-url="/items/{{ item.id }}/read"
+     aria-label="Open the original" title="Open the original (o)">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></svg></a>
+</header>
 {% endblock %}
+{% block main_class %}reader-main{% endblock %}
+{% block content %}
+<article class="reader" data-item="{{ item.id }}">
+  <div class="meta">
+    <span class="rel {{ ev.relevance | score_class }}">{{ ev.relevance }}</span>
+    {% if item.author %}<span>{{ 'u/' if is_reddit }}{{ item.author }}</span>{% endif %}
+    <time datetime="{{ item.published_at.isoformat() }}">{{ item.published_at | ago }}</time>
+    {% if item.score is not none %}<span>↑{{ item.score }}</span>{% endif %}
+  </div>
+  <h1>{{ item.title }}</h1>
+  {% if card.interests %}<div class="chips">{% for name in card.interests %}<span class="chip">{{ name }}</span>{% endfor %}</div>{% endif %}
+
+  {% if ev.summary %}
+  <aside class="tldr">
+    <p><b>TL;DR</b> {{ ev.summary }}</p>
+    <details><summary>Why this post?</summary><p>{{ ev.reason }}</p><p class="muted small">{{ ev.model }} · profile v{{ ev.profile_version }}</p></details>
+  </aside>
+  {% endif %}
+
+  {% if kind == 'image' %}
+    <img class="reader-image" src="{{ item.url }}" alt="" loading="lazy" referrerpolicy="no-referrer">
+    {% if item.body and not item.body.startswith('[link post') %}<div class="prose">{{ item.body }}</div>{% endif %}
+  {% elif kind == 'media' %}
+    {% if item.body and not item.body.startswith('[link post') %}<div class="prose">{{ item.body }}</div>{% endif %}
+    <p><a class="button-link" href="{{ item.url }}" target="_blank" rel="noopener">View {{ 'gallery' if 'gallery' in item.url else 'video' }} ↗</a></p>
+  {% elif kind == 'article' %}
+    {% if item.body and not item.body.startswith('[link post') and item.discussion_url %}<div class="prose">{{ item.body }}</div>{% endif %}
+    <div class="article-slot" hx-get="/items/{{ item.id }}/article" hx-trigger="load" hx-swap="outerHTML">
+      <p class="muted loading">Loading article from {{ item.url.split('/')[2] if '://' in item.url else item.url }}…</p>
+    </div>
+  {% else %}
+    {% if item.body %}<div class="prose">{{ item.body }}</div>{% endif %}
+  {% endif %}
+
+  {% if is_reddit %}
+  <section class="comments-section" id="comments">
+    <h2>Comments</h2>
+    <div hx-get="/items/{{ item.id }}/comments" hx-trigger="{{ 'load' if item.comments_text else 'revealed' }}" hx-swap="outerHTML">
+      <p class="muted loading">Loading comments…</p>
+    </div>
+  </section>
+  {% endif %}
+</article>
+{% endblock %}
+{% block bottombar %}{% include "partials/reader_actions.html" %}{% endblock %}
