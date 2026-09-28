@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="feed-layout">
+  <section class="feed">
+    <div class="tabs">
+      {% set base_qs = ('&sort=' ~ f.sort) ~ (('&interest=' ~ f.interest) if f.interest else '') ~ (('&source=' ~ f.source) if f.source else '') ~ ('&unread=1' if f.unread else '') %}
+      <a href="/?view=feed{{ base_qs }}" class="{{ 'active' if f.view == 'feed' }}">For you</a>
+      <a href="/?view=filtered{{ base_qs }}" class="{{ 'active' if f.view == 'filtered' }}" title="Posts the filter scored below your threshold. Upvote anything it got wrong.">Filtered out</a>
+      <a href="/?view=all{{ base_qs }}" class="{{ 'active' if f.view == 'all' }}">All</a>
+    </div>
+
+    {% if llm_paused %}
+    <p class="notice">Scoring is paused: <b>{{ llm_paused.key }}</b> is unavailable. Retrying {{ llm_paused.paused_until | until }} (attempt {{ llm_paused.failures }}).
+      {% if pending %}{{ pending }} post{{ 's' if pending != 1 }} queued, nothing is lost.{% endif %}
+      <span class="muted small" title="{{ llm_paused.last_error }}">Details on hover</span></p>
+    {% elif pending %}<p class="notice">{{ pending }} new post{{ 's' if pending != 1 }} waiting to be scored.</p>{% endif %}
+
+    <div id="cards">
+      {% if cards %}
+        {% include "partials/card_list.html" %}
+      {% elif not sources %}
+        <div class="empty"><h2>Nothing here yet</h2><p><a href="/settings/sources">Add a subreddit or RSS feed</a>, then <a href="/settings/interests">describe what you're interested in</a>.</p></div>
+      {% elif not interests %}
+        <div class="empty"><h2>Tell the filter what you care about</h2><p><a href="/settings/interests">Add an interest</a>, for example "Prusa printer bugs and their fixes".</p></div>
+      {% else %}
+        <div class="empty"><h2>No posts match</h2><p>New posts are fetched every few minutes. Try <a href="/?view=all">All</a> or change the filters.</p></div>
+      {% endif %}
+    </div>
+  </section>
+
+  <aside class="sidebar">
+    <form method="get" action="/" class="filters stack">
+      <input type="hidden" name="view" value="{{ f.view }}">
+      <input type="search" name="q" value="{{ f.q }}" placeholder="Search posts">
+      <label>Interest
+        <select name="interest"><option value="">All interests</option>
+          {% for i in interests %}<option value="{{ i.id }}" {{ 'selected' if f.interest == i.id }}>{{ i.name }}</option>{% endfor %}
+        </select></label>
+      <label>Source
+        <select name="source"><option value="">All sources</option>
+          {% for s in sources %}<option value="{{ s.id }}" {{ 'selected' if f.source == s.id }}>{{ s.label }}</option>{% endfor %}
+        </select></label>
+      <label>Sort
+        <select name="sort">
+          <option value="new" {{ 'selected' if f.sort == 'new' }}>Newest</option>
+          <option value="top" {{ 'selected' if f.sort == 'top' }}>Most relevant</option>
+        </select></label>
+      <label class="check"><input type="checkbox" name="unread" value="1" {{ 'checked' if f.unread }}> Unread only</label>
+      <button>Apply</button>
+    </form>
+    <p class="muted small">Threshold {{ user.settings.relevance_threshold }}/100 · <a href="/settings">change</a></p>
+    <p class="muted small">Press <kbd>?</kbd> for keyboard shortcuts.</p>
+  </aside>
+</div>
+{% endblock %}

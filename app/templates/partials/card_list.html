@@ -1,0 +1,5 @@
+{% for card in cards %}{% include "partials/card.html" %}{% endfor %}
+{% if next_offset %}
+<div class="load-more" hx-get="/feed/page?offset={{ next_offset }}&view={{ f.view }}&sort={{ f.sort }}{% if f.interest %}&interest={{ f.interest }}{% endif %}{% if f.source %}&source={{ f.source }}{% endif %}{% if f.q %}&q={{ f.q | urlencode }}{% endif %}{% if f.unread %}&unread=1{% endif %}"
+     hx-trigger="revealed" hx-swap="outerHTML">Loading more…</div>
+{% endif %}

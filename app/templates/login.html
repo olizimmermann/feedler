@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Log in · Feedler{% endblock %}
+{% block main_class %}auth{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <h1 class="brand big">feedler</h1>
+  <p class="muted">Your subreddits and feeds, filtered by an LLM to what you care about.</p>
+  {% if error %}<p class="flash error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Email <input type="email" name="email" value="{{ email or '' }}" required autofocus></label>
+    <label>Password <input type="password" name="password" required></label>
+    <button class="primary">Log in</button>
+  </form>
+  {% if can_register %}<p class="muted small">No account? <a href="/register">Create one</a></p>{% endif %}
+</div>
+{% endblock %}

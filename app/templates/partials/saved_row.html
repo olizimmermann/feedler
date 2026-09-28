@@ -1,0 +1,26 @@
+<article class="card saved-row" id="saved-{{ s.id }}">
+  <div class="card-body">
+    <div class="meta">
+      <span>{{ s.url.split('/')[2] if '://' in s.url else s.url }}</span>
+      <time title="{{ s.created_at.strftime('%Y-%m-%d %H:%M') }}">saved {{ s.created_at | ago }}</time>
+      {% if s.archived_text %}<span title="Page text archived">archived</span>{% endif %}
+    </div>
+    <h2 class="title"><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.title }}</a></h2>
+    {% if s.tags %}<div class="chips">{% for t in s.tags %}<a class="chip" href="/saved?tag={{ t | urlencode }}">#{{ t }}</a>{% endfor %}</div>{% endif %}
+    {% if s.note %}<p class="summary">{{ s.note }}</p>{% endif %}
+    <div class="actions">
+      {% if s.archived_text %}<a class="act" href="/saved/{{ s.id }}">Read archived copy</a>{% endif %}
+      {% if s.item_id %}<a class="act" href="/items/{{ s.item_id }}">Original post</a>{% endif %}
+      <details class="why">
+        <summary class="act">Edit</summary>
+        <form class="stack why-body" hx-post="/saved/{{ s.id }}/edit" hx-target="#saved-{{ s.id }}" hx-swap="outerHTML">
+          <input name="tags" value="{{ s.tags | join(', ') }}" placeholder="tags">
+          <textarea name="note" rows="2" placeholder="Note">{{ s.note }}</textarea>
+          <button class="small">Save changes</button>
+        </form>
+      </details>
+      <button class="act hide" hx-post="/saved/{{ s.id }}/delete" hx-target="#saved-{{ s.id }}" hx-swap="outerHTML"
+              hx-confirm="Remove this from saved?">Remove</button>
+    </div>
+  </div>
+</article>

@@ -1,0 +1,3 @@
+{% for s in items %}{% include "partials/saved_row.html" %}{% else %}
+<div class="empty"><p>{% if q or tag %}Nothing matches.{% else %}Nothing saved yet. Use ☆ Save in the feed, or add a link on the right.{% endif %}</p></div>
+{% endfor %}

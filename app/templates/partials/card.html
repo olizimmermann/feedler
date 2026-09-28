@@ -1,0 +1,44 @@
+{% set item = card.item %}{% set ev = card.ev %}
+<article class="card {{ 'is-read' if ev.read_at }} {{ 'is-below' if ev.relevance < user.settings.relevance_threshold }}"
+         id="card-{{ item.id }}" data-item="{{ item.id }}" data-url="{{ item.url }}" tabindex="-1">
+  <div class="rail">
+    <button class="vote up {{ 'on' if card.vote == 1 }}" title="More like this (u)"
+            hx-post="/items/{{ item.id }}/vote" hx-vals='{"value": 1}' hx-target="#card-{{ item.id }}" hx-swap="outerHTML">▲</button>
+    <span class="rel {{ ev.relevance | score_class }}" title="Relevance score from the LLM">{{ ev.relevance }}</span>
+    <button class="vote down {{ 'on' if card.vote == -1 }}" title="Less like this (d)"
+            hx-post="/items/{{ item.id }}/vote" hx-vals='{"value": -1}' hx-target="#card-{{ item.id }}" hx-swap="outerHTML">▼</button>
+  </div>
+  <div class="card-body">
+    <div class="meta">
+      {% for s in item.sources %}<a class="src src-{{ s.kind }}" href="/?source={{ s.id }}">{{ s.label }}</a>{% endfor %}
+      {% if item.author %}<span>{{ 'u/' if item.external_id.startswith('reddit:') }}{{ item.author }}</span>{% endif %}
+      <time datetime="{{ item.published_at.isoformat() }}" title="{{ item.published_at.strftime('%Y-%m-%d %H:%M UTC') }}">{{ item.published_at | timeago }}</time>
+      {% if item.score is not none %}<span title="Reddit score">↑{{ item.score }}</span>{% endif %}
+      {% if item.num_comments %}<span>{{ item.num_comments }} comments</span>{% endif %}
+    </div>
+    <h2 class="title"><a href="{{ item.url }}" target="_blank" rel="noopener"
+        class="item-link" data-read-url="/items/{{ item.id }}/read">{{ item.title }}</a></h2>
+    {% if card.interests %}<div class="chips">{% for name in card.interests %}<span class="chip">{{ name }}</span>{% endfor %}</div>{% endif %}
+    {% if ev.summary %}<p class="summary">{{ ev.summary }}</p>{% endif %}
+    <div class="actions">
+      <button class="act {{ 'on' if card.saved }}" title="Save for later (s)" data-action="save"
+              hx-post="/items/{{ item.id }}/save" hx-target="#card-{{ item.id }}" hx-swap="outerHTML">{{ '★ Saved' if card.saved else '☆ Save' }}</button>
+      <a class="act" href="/items/{{ item.id }}">Details</a>
+      {% if item.discussion_url and item.discussion_url != item.url %}<a class="act" href="{{ item.discussion_url }}" target="_blank" rel="noopener">Discussion</a>{% endif %}
+      <details class="why">
+        <summary class="act">Why?</summary>
+        <div class="why-body">
+          <p>{{ ev.reason }}</p>
+          <p class="muted small">Scored by {{ ev.model }} · profile v{{ ev.profile_version }}</p>
+          <form class="note-form" hx-post="/items/{{ item.id }}/vote" hx-target="#card-{{ item.id }}" hx-swap="outerHTML">
+            <input name="note" placeholder="Tell the filter why (optional)" maxlength="500">
+            <button name="value" value="1" class="small">▲ More</button>
+            <button name="value" value="-1" class="small">▼ Less</button>
+          </form>
+        </div>
+      </details>
+      <button class="act hide" title="Hide (x)" data-action="hide"
+              hx-post="/items/{{ item.id }}/hide" hx-target="#card-{{ item.id }}" hx-swap="outerHTML">Hide</button>
+    </div>
+  </div>
+</article>

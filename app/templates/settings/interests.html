@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Interests · Feedler{% endblock %}
+{% macro source_select(selected) %}
+<select name="source_id">
+  <option value="">All sources</option>
+  {% for s in sources %}<option value="{{ s.id }}" {{ 'selected' if selected == s.id }}>{{ s.label }}</option>{% endfor %}
+</select>
+{% endmacro %}
+{% block content %}
+{% include "settings/_nav.html" %}
+<section class="panel">
+  <h2>Add an interest</h2>
+  <p class="muted">Describe what you want in plain language. The more specific, the better the filter works.</p>
+  <form method="post" action="/settings/interests" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input name="name" placeholder="Name, e.g. Prusa bugs & fixes" required maxlength="200">
+    <textarea name="description" rows="3" placeholder="e.g. Bug reports, firmware issues and print failures on Prusa MK4/Core One, especially posts where someone found a fix or workaround. Not interested in print showcases."></textarea>
+    <div class="row">
+      <label>Only for {{ source_select(None) }}</label>
+      <label class="check"><input type="checkbox" name="include_comments" value="true" checked> Let the LLM read top comments</label>
+    </div>
+    <button class="primary">Add interest</button>
+  </form>
+</section>
+
+{% for i in interests %}
+<section class="panel {{ 'disabled' if not i.enabled }}">
+  <form method="post" action="/settings/interests/{{ i.id }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input name="name" value="{{ i.name }}" required maxlength="200" class="h-input">
+    <textarea name="description" rows="3">{{ i.description }}</textarea>
+    <div class="row">
+      <label>Only for {{ source_select(i.source_id) }}</label>
+      <label class="check"><input type="checkbox" name="include_comments" value="true" {{ 'checked' if i.include_comments }}> Read comments</label>
+      <label class="check"><input type="checkbox" name="enabled" value="true" {{ 'checked' if i.enabled }}> Enabled</label>
+      <span class="grow"></span>
+      <button>Save</button>
+      <button class="link danger" formaction="/settings/interests/{{ i.id }}/delete" onclick="return confirm('Delete this interest?')">Delete</button>
+    </div>
+  </form>
+</section>
+{% endfor %}
+{% endblock %}

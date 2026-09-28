@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Sources · Feedler{% endblock %}
+{% block content %}
+{% include "settings/_nav.html" %}
+{% if welcome %}
+<div class="panel welcome">
+  <h2>Welcome</h2>
+  <ol>
+    <li>Add the subreddits and RSS feeds you want to follow.</li>
+    <li><a href="/settings/interests">Describe your interests</a>, e.g. "Prusa printer bugs and their fixes".</li>
+    <li>Check your <a href="/settings">LLM provider</a>. New posts are then scored every few minutes.</li>
+  </ol>
+</div>
+{% endif %}
+
+{% if not settings.reddit_oauth %}
+<p class="notice">Reddit runs in <b>public mode</b> because no API credentials are configured. Posts are fetched without comments, so fixes posted as replies won't be seen. Add <code>REDDIT_CLIENT_ID</code> and <code>REDDIT_CLIENT_SECRET</code> to <code>.env</code> to enable comments.</p>
+{% endif %}
+
+<section class="panel">
+  <h2>Add a source</h2>
+  <form method="post" action="/settings/sources" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input name="value" class="grow" placeholder="r/prusa3d  or  https://example.com/feed.xml" required>
+    <button class="primary">Add</button>
+  </form>
+  <form method="post" action="/settings/sources/opml" enctype="multipart/form-data" class="row small-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label class="muted small">Import OPML <input type="file" name="file" accept=".opml,.xml,text/xml" required></label>
+    <button class="small">Import</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Your sources <span class="muted">({{ sources | length }})</span></h2>
+  {% if sources %}
+  <table class="table">
+    <thead><tr><th>Source</th><th>Type</th><th>Last polled</th><th></th></tr></thead>
+    <tbody>
+    {% for s in sources %}
+      <tr>
+        <td><a href="/?view=all&source={{ s.id }}">{{ s.label }}</a>{% if s.kind == 'rss' %}<div class="muted small ellipsis">{{ s.identifier }}</div>{% endif %}
+          {% if s.last_error %}<div class="flash error small">{{ s.last_error }}</div>{% endif %}</td>
+        <td><span class="src src-{{ s.kind }}">{{ s.kind }}</span></td>
+        <td class="muted">{{ s.last_polled_at | ago if s.last_polled_at else 'pending' }}</td>
+        <td class="right">
+          <form method="post" action="/settings/sources/{{ s.id }}/unsubscribe">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <button class="link danger">Remove</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No sources yet.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,7 @@
+<nav class="subnav">
+  <a href="/settings/sources" class="{{ 'active' if request.url.path == '/settings/sources' }}">Sources</a>
+  <a href="/settings/interests" class="{{ 'active' if request.url.path == '/settings/interests' }}">Interests</a>
+  <a href="/settings" class="{{ 'active' if request.url.path == '/settings' }}">LLM &amp; profile</a>
+</nav>
+{% if message %}<p class="flash ok">{{ message }}</p>{% endif %}
+{% if error %}<p class="flash error">{{ error }}</p>{% endif %}

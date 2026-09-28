@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ card.item.title }} · Feedler{% endblock %}
+{% block content %}
+<p><a href="javascript:history.back()">← Back</a></p>
+<div class="detail">
+  {% include "partials/card.html" %}
+  {% if card.item.body %}
+  <section class="panel">
+    <h3>Post</h3>
+    <div class="prose">{{ card.item.body }}</div>
+  </section>
+  {% endif %}
+  {% if card.item.comments_text %}
+  <section class="panel">
+    <h3>Top comments</h3>
+    <ul class="comments">{% for line in card.item.comments_text.splitlines() %}<li>{{ line }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

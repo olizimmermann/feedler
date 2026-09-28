@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}LLM & profile · Feedler{% endblock %}
+{% block content %}
+{% include "settings/_nav.html" %}
+{% set us = user.settings %}
+<section class="panel">
+  <h2>LLM</h2>
+  <form method="post" action="/settings/llm" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="grid2">
+      <label>Provider
+        <select name="provider">
+          {% for p, ok, default in providers %}
+          <option value="{{ p }}" {{ 'selected' if us.llm_provider == p }} {{ 'disabled' if not ok and us.llm_provider != p }}>
+            {{ p }}{{ '' if ok else ' (not configured)' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Model <span class="muted small">(blank = default)</span>
+        <input name="model" value="{{ us.llm_model or '' }}" placeholder="{% for p, ok, default in providers %}{% if p == us.llm_provider %}{{ default }}{% endif %}{% endfor %}">
+      </label>
+      <label>Relevance threshold <span class="muted small">(0-100, shown in "For you")</span>
+        <input type="number" name="threshold" min="0" max="100" value="{{ us.relevance_threshold }}">
+      </label>
+      <label>Top comments per post
+        <input type="number" name="comments_top_n" min="0" max="50" value="{{ us.comments_top_n }}">
+      </label>
+    </div>
+    <div><button class="primary">Save</button></div>
+  </form>
+  {% if llm_paused %}
+  <p class="notice small">Paused: <b>{{ llm_paused.key }}</b> is temporarily unavailable. Retrying {{ llm_paused.paused_until | until }} (attempt {{ llm_paused.failures }}, waits grow up to 30 min). Unscored posts stay queued.<br><span class="muted">{{ llm_paused.last_error }}</span></p>
+  {% elif last_call and not last_call.ok %}
+  <p class="flash error small">Last LLM call failed ({{ last_call.created_at | ago }}): {{ last_call.error }}</p>
+  {% endif %}
+  <p class="muted small">API keys are set in <code>.env</code> by whoever runs this server and shared by all users.</p>
+</section>
+
+<section class="panel" id="profile">
+  <h2>Preference profile {% if profile %}<span class="muted">v{{ profile.version }} · {{ profile.origin }}{{ ' · locked' if profile.locked }}</span>{% endif %}</h2>
+  <p class="muted">The filter reads this along with your interests. It's rewritten from your votes after every {{ settings.profile_refine_after_votes }} votes and nightly, unless you lock it. You can edit it yourself at any time.</p>
+  <form method="post" action="/settings/profile" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <textarea name="text" rows="12" placeholder="Nothing learned yet. Vote on posts, or write your own, e.g.&#10;Wants:&#10;- concrete fixes for MK4 layer shifts&#10;Doesn't want:&#10;- print showcases">{{ profile.text if profile else '' }}</textarea>
+    <div class="row">
+      <button class="primary">Save edits</button>
+      <button formaction="/settings/profile/refine" title="Rewrite the profile from your votes now"
+              onclick="this.textContent='Refining…'">Refine from votes now</button>
+      {% if profile %}<button formaction="/settings/profile/lock">{{ 'Unlock' if profile.locked else 'Lock' }}</button>{% endif %}
+      <span class="muted small">{{ us.votes_since_refine }} vote{{ 's' if us.votes_since_refine != 1 }} since last refinement</span>
+    </div>
+  </form>
+  {% if history | length > 1 %}
+  <details>
+    <summary>History ({{ history | length }} versions)</summary>
+    {% for p in history[1:] %}
+    <div class="history">
+      <div class="row"><b>v{{ p.version }}</b><span class="muted small">{{ p.origin }} · {{ p.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        <form method="post" action="/settings/profile/restore/{{ p.version }}"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="small">Restore</button></form></div>
+      <pre>{{ p.text }}</pre>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Your RSS output</h2>
+  <p class="muted">Subscribe to your filtered feed in any reader app:</p>
+  <input readonly value="{{ settings.base_url.rstrip('/') }}/u/{{ user.feed_token }}/feed.xml" onclick="this.select()" class="mono">
+</section>
+
+<section class="panel">
+  <h2>Usage <span class="muted">(last 30 days)</span></h2>
+  {% if usage %}
+  <table class="table">
+    <thead><tr><th>Provider</th><th>Model</th><th>Purpose</th><th class="right">Calls</th><th class="right">Tokens in</th><th class="right">Tokens out</th><th class="right">Failed</th></tr></thead>
+    <tbody>{% for provider, model, purpose, calls, tin, tout, failed in usage %}
+      <tr><td>{{ provider }}</td><td class="mono small">{{ model }}</td><td>{{ purpose }}</td><td class="right">{{ calls }}</td>
+        <td class="right">{{ '{:,}'.format(tin or 0) }}</td><td class="right">{{ '{:,}'.format(tout or 0) }}</td><td class="right">{{ failed }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}<p class="muted">No LLM calls yet.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,60 @@
+x-app: &app
+  build: .
+  image: feedler:latest
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+asyncpg://feedler:${POSTGRES_PASSWORD:-feedler}@db:5432/feedler
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"  # lets OLLAMA_BASE_URL point at an Ollama on the host (Linux)
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: feedler
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-feedler}
+      POSTGRES_DB: feedler
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U feedler -d feedler"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  ollama:

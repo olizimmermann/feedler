@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Admin · Feedler{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+<section class="panel">
+  <div class="row">
+    <p class="grow">Registration is <b>{{ 'open' if reg_open else 'closed' }}</b>.</p>
+    <form method="post" action="/admin/registration">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button>{{ 'Close registration' if reg_open else 'Open registration' }}</button>
+    </form>
+  </div>
+</section>
+<section class="panel">
+  <h2>Users</h2>
+  <table class="table">
+    <thead><tr><th>Email</th><th>Joined</th><th class="right">Sources</th><th class="right">Votes</th><th class="right">Saved</th><th></th></tr></thead>
+    <tbody>{% for u, subs, votes, saved in users %}
+      <tr>
+        <td>{{ u.email }}{% if u.is_admin %} <span class="chip">admin</span>{% endif %}</td>
+        <td class="muted">{{ u.created_at.strftime('%Y-%m-%d') }}</td>
+        <td class="right">{{ subs }}</td><td class="right">{{ votes }}</td><td class="right">{{ saved }}</td>
+        <td class="right">{% if u.id != user.id %}
+          <form method="post" action="/admin/users/{{ u.id }}/admin" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <button class="link">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button></form>
+          <form method="post" action="/admin/users/{{ u.id }}/delete" class="inline" onsubmit="return confirm('Delete this user and all their data?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="link danger">Delete</button></form>
+        {% endif %}</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table>
+</section>
+{% endblock %}
