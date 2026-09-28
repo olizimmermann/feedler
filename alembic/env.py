@@ -2,6 +2,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
@@ -14,9 +15,14 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+# web and worker both migrate on start; this lock makes the second one wait for the first
+MIGRATION_LOCK_ID = 7_331_000
+
+
 def do_run_migrations(connection):
     context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
     with context.begin_transaction():
+        connection.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": MIGRATION_LOCK_ID})
         context.run_migrations()
 
 

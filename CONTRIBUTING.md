@@ -33,7 +33,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://feedler:feedler@localhost:5432/feedler_te
 - Add or update tests for behaviour changes (`tests/`).
 - After changing `app/models.py`, generate a migration and commit it:
   ```bash
-  docker compose run --rm -v "$PWD/alembic:/srv/alembic" migrate \
+  docker compose run --rm -v "$PWD/alembic:/srv/alembic" web \
     alembic revision --autogenerate -m "describe change"
   ```
   Rename the file to the next number (`0003_...py`) and check the generated code.

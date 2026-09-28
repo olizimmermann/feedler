@@ -1,12 +1,20 @@
 x-app: &app
+  # Prebuilt images are published for every commit on main that passes CI.
+  # `docker compose up -d --build` builds from source instead (for development).
+  image: ghcr.io/olizimmermann/feedler:latest
   build: .
-  image: feedler:latest
   env_file: .env
   environment:
     DATABASE_URL: postgresql+asyncpg://feedler:${POSTGRES_PASSWORD:-feedler}@db:5432/feedler
   restart: unless-stopped
   extra_hosts:
     - "host.docker.internal:host-gateway"  # lets OLLAMA_BASE_URL point at an Ollama on the host (Linux)
+  labels:
+    # Watchtower (profile "autoupdate") only updates containers with this label
+    com.centurylinklabs.watchtower.enable: "true"
+  depends_on:
+    db:
+      condition: service_healthy
 
 services:
   db:
@@ -25,34 +33,34 @@ services:
       retries: 20
     restart: unless-stopped
 
-  migrate:
-    <<: *app
-    command: ["alembic", "upgrade", "head"]
-    restart: "no"
-    depends_on:
-      db:
-        condition: service_healthy
-
+  # Both services apply database migrations on start (see docker/entrypoint.sh)
   web:
     <<: *app
     ports:
       - "${WEB_PORT:-8000}:8000"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
 
   worker:
     <<: *app
     command: ["python", "-m", "app.worker"]
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
 
   ollama:
     image: ollama/ollama:latest
     profiles: ["ollama"]
     volumes:
       - ollama:/root/.ollama
+    restart: unless-stopped
+
+  # Automatic updates: checks ghcr.io for a new Feedler image and restarts web + worker with it.
+  # Enable on a server with COMPOSE_PROFILES=autoupdate in .env (see README).
+  watchtower:
+    image: nickfedor/watchtower:1
+    profiles: ["autoupdate"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-300}
+      WATCHTOWER_CLEANUP: "true"
     restart: unless-stopped
 
 volumes:

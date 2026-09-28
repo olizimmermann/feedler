@@ -37,8 +37,10 @@ Edit `.env`:
 Then start it:
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
+
+This pulls the prebuilt image. Use `docker compose up -d --build` to build from source instead.
 
 Open <http://localhost:8000> and:
 
@@ -51,10 +53,27 @@ The worker polls each source every `DEFAULT_POLL_INTERVAL_MINUTES` minutes and s
 
 ### Updating
 
+Every commit on `main` that passes CI is published as `ghcr.io/olizimmermann/feedler:latest` (amd64 and arm64). To update by hand:
+
 ```bash
-git pull
-docker compose up -d --build   # database migrations run automatically
+git pull                 # picks up changes to docker-compose.yml and .env.example
+docker compose pull
+docker compose up -d     # database migrations run automatically on start
 ```
+
+Use `docker compose up -d --build` instead to run your own local changes.
+
+### Automatic updates
+
+Add this to `.env` on your server:
+
+```
+COMPOSE_PROFILES=autoupdate
+```
+
+Then run `docker compose up -d`. This starts [Watchtower](https://github.com/nicholas-fedor/watchtower), which checks for a new image every 5 minutes (`WATCHTOWER_POLL_INTERVAL`, in seconds). When it finds one, it restarts `web` and `worker` with the new image and removes the old one. Only Feedler's own containers are touched, because Watchtower only updates containers labelled `com.centurylinklabs.watchtower.enable`. Watchtower needs access to the Docker socket.
+
+Watchtower updates the image only. Changes to `docker-compose.yml` itself (new services or settings) still need a `git pull && docker compose up -d`.
 
 ## LLM providers
 
@@ -107,17 +126,19 @@ Posts that haven't been scored yet wait in a queue in the database. Temporary er
 | Service | Role |
 |---|---|
 | `db` | Postgres 16 (also creates `feedler_test` for the test suite) |
-| `migrate` | Runs `alembic upgrade head` once, then exits |
 | `web` | FastAPI + HTMX UI on `WEB_PORT` (default 8000) |
 | `worker` | Polls sources, scores posts, refreshes comments, refines profiles |
-| `ollama` | Optional (`--profile ollama`) |
+| `ollama` | Optional (profile `ollama`) |
+| `watchtower` | Optional (profile `autoupdate`): installs new releases automatically |
+
+`web` and `worker` apply database migrations when they start, so an update never needs a manual step.
 
 ## Development
 
 ```bash
 docker compose exec web pytest            # runs against the feedler_test database
 docker compose logs -f worker             # watch polling and scoring
-docker compose run --rm -v "$PWD/alembic:/srv/alembic" migrate \
+docker compose run --rm -v "$PWD/alembic:/srv/alembic" web \
   alembic revision --autogenerate -m "describe change"   # after editing app/models.py
 ```
 
