@@ -4,6 +4,7 @@ Unscored items simply stay queued (they have no evaluation row) until the pause 
 """
 
 import random
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +56,31 @@ async def record_success(db: AsyncSession, key: str) -> None:
         status.last_error = None
 
 
-async def user_llm_status(db: AsyncSession, provider: str, model: str | None, settings) -> ProviderStatus | None:
-    """Pause status of the model this user scores with, for display."""
-    return await paused_status(db, status_key(provider, model or settings.default_model(provider)))
+async def first_available(db: AsyncSession, chain: list[LLMProvider]) -> LLMProvider | None:
+    """The first provider in the chain that isn't paused, or None if all of them are."""
+    for provider in chain:
+        if not await paused_status(db, status_key(provider)):
+            return provider
+    return None
+
+
+@dataclass
+class LLMStatus:
+    paused: ProviderStatus | None  # the user's own provider, if it's paused
+    active: str | None  # provider:model scoring right now (a fallback when `paused` is set)
+    resumes: ProviderStatus | None = None  # soonest to retry, when the whole chain is paused
+    chain: list[str] = field(default_factory=list)
+
+
+async def user_llm_status(db: AsyncSession, us, settings) -> LLMStatus:
+    """Pause state of the user's provider chain, for display."""
+    from app.llm.registry import get_provider_chain
+
+    try:
+        keys = [status_key(p) for p in get_provider_chain(us, settings=settings)]
+    except LLMError:
+        return LLMStatus(None, None)
+    paused = {k: s for k in keys if (s := await paused_status(db, k))}
+    active = next((k for k in keys if k not in paused), None)
+    resumes = None if active else min(paused.values(), key=lambda s: s.paused_until)
+    return LLMStatus(paused.get(keys[0]), active, resumes, keys)

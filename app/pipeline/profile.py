@@ -6,12 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.llm.backoff import paused_status, record_failure, record_success, status_key
+from app.llm.backoff import first_available, paused_status, record_failure, record_success, status_key
 from app.llm.base import LLMError
 from app.llm.prompts import (
     PROFILE_SCHEMA, PROFILE_SYSTEM, InterestSpec, VoteSpec, build_profile_prompt, render_profile,
 )
-from app.llm.registry import get_provider
+from app.llm.registry import get_provider_chain
 from app.models import Evaluation, Interest, Item, PreferenceProfile, User, UserSettings, Vote
 from app.pipeline.classify import latest_profile
 from app.pipeline.usage import record_call
@@ -64,24 +64,31 @@ async def refine_profile(db: AsyncSession, user: User, settings: Settings) -> Pr
 
     us = await db.get(UserSettings, user.id)
     try:
-        provider = get_provider(us.llm_provider, us.llm_model, purpose="profile", settings=settings)
+        chain = get_provider_chain(us, purpose="profile", settings=settings)
     except LLMError as e:
         raise ProfileError(str(e)) from e
-    key = status_key(provider)
-    if paused := await paused_status(db, key):
-        raise ProfileError(
-            f"{key} is busy. The profile will be refined automatically after "
-            f"{paused.paused_until.strftime('%H:%M')} UTC."
-        )
-    try:
-        result = await provider.complete_json(PROFILE_SYSTEM, prompt, PROFILE_SCHEMA, max_tokens=16000)
-    except LLMError as e:
-        if e.retryable:
-            await record_failure(db, key, e)
-        else:
+    # Use the first provider that isn't paused; a busy one hands over to the next
+    while True:
+        provider = await first_available(db, chain)
+        if provider is None:
+            statuses = [await paused_status(db, status_key(p)) for p in chain]
+            soonest = min((s for s in statuses if s), key=lambda s: s.paused_until)
+            raise ProfileError(
+                f"{', '.join(status_key(p) for p in chain)} {'is' if len(chain) == 1 else 'are'} busy. "
+                f"The profile will be refined automatically after {soonest.paused_until.strftime('%H:%M')} UTC."
+            )
+        key = status_key(provider)
+        try:
+            result = await provider.complete_json(PROFILE_SYSTEM, prompt, PROFILE_SCHEMA, max_tokens=16000)
+            break
+        except LLMError as e:
+            if e.retryable:
+                await record_failure(db, key, e)
+                await db.commit()
+                continue
             record_call(db, user.id, provider, "profile", error=e)
-        await db.commit()
-        raise ProfileError(str(e)) from e
+            await db.commit()
+            raise ProfileError(str(e)) from e
     record_call(db, user.id, provider, "profile", result=result)
     await record_success(db, key)
 

@@ -172,3 +172,22 @@ async def test_reader_flow(client_factory, sessionmaker, monkeypatch):
     r = await client.post(f"/items/{ids[0]}/vote", data={"value": 1, "ui": "reader", "view": "feed"},
                           headers={"X-CSRF-Token": token})
     assert 'id="reader-actions"' in r.text and "vote up on" in r.text
+
+
+async def test_llm_fallback_settings(client_factory, sessionmaker):
+    from app.models import UserSettings
+
+    client = await client_factory()
+    token = await register(client, "fb@example.com")
+    page = (await client.get("/settings")).text
+    assert page.count('name="fallbacks"') == 2
+
+    r = await client.post("/settings/llm", data={"csrf_token": token, "provider": "gemini", "model": "",
+                                                 "fallbacks": ["ollama", "gemini", "", "ollama", "bogus"]})
+    assert r.status_code == 303
+    async with sessionmaker() as db:
+        us = (await db.scalars(select(UserSettings))).one()
+        assert us.llm_provider == "gemini" and us.llm_fallbacks == ["ollama"]
+    page = (await client.get("/settings")).text
+    assert re.search(r'<option value="ollama" selected', page)
+    assert (await client.get("/")).status_code == 200

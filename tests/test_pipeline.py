@@ -219,3 +219,62 @@ async def test_queue_keeps_items_fetched_after_subscribing(db, fake):
     sub.created_at = datetime.now(UTC) - timedelta(days=1)
     await db.commit()
     assert await db.scalar(select(func.count(Item.id)).where(*queue_filter(user.id, SETTINGS))) == 0
+
+
+@pytest.fixture
+def fakes():
+    """A separate fake per provider name, so a busy primary can hand over to a fallback."""
+    by_name: dict[str, FakeProvider] = {}
+
+    def factory(name, model):
+        return by_name.setdefault(name, FakeProvider(name=name, model=f"{name}-model"))
+
+    set_provider_override(factory)
+    yield factory
+    set_provider_override(None)
+
+
+async def test_busy_provider_falls_back(db, fakes):
+    from app.llm.backoff import paused_status, user_llm_status
+    from app.pipeline.classify import queue_filter
+
+    user = await setup_feed(db)
+    us = await db.get(UserSettings, user.id)
+    us.llm_provider, us.llm_fallbacks = "gemini", ["ollama"]
+    await db.commit()
+    gemini, ollama = fakes("gemini", None), fakes("ollama", None)
+    gemini.overloaded = True
+
+    # The batch gemini turned away is scored by ollama in the same run
+    assert await classify_user(db, user, SETTINGS) == 3
+    models = set((await db.scalars(select(Evaluation.model))).all())
+    assert models == {"ollama:ollama-model"}
+    assert (await paused_status(db, "gemini:gemini-model")).failures == 1
+    assert await db.scalar(select(func.count(LLMCall.id)).where(LLMCall.ok.is_(False))) == 0
+    status = await user_llm_status(db, us, SETTINGS)
+    assert status.paused.key == "gemini:gemini-model" and status.active == "ollama:ollama-model"
+    assert status.resumes is None
+
+    # While gemini is paused it isn't asked at all, and refinement uses ollama too
+    gemini.prompts.clear()
+    item_id = await db.scalar(select(Item.id).limit(1))
+    db.add(Vote(user_id=user.id, item_id=item_id, value=1))
+    await db.commit()
+    assert (await refine_profile(db, user, SETTINGS)).version == 1
+    assert gemini.prompts == [] and len(ollama.prompts) == 2
+
+    # Everything busy: items stay queued and the status says when the next try is
+    ollama.overloaded = True
+    await db.execute(Evaluation.__table__.delete())
+    await db.commit()
+    assert await classify_user(db, user, SETTINGS) == 0
+    assert await db.scalar(select(func.count(Item.id)).where(*queue_filter(user.id, SETTINGS))) == 3
+    status = await user_llm_status(db, us, SETTINGS)
+    assert status.active is None and status.resumes is not None
+    with pytest.raises(ProfileError, match="are busy"):
+        await refine_profile(db, user, SETTINGS)
+
+
+def test_fallback_defaults():
+    s = Settings(default_llm_provider="gemini", default_llm_fallbacks=" Ollama, gemini, nope, ollama")
+    assert s.fallback_providers == ["ollama"]

@@ -48,9 +48,11 @@
     {% if request.query_params.get('caught_up') %}
     <p class="notice ok-notice">You're all caught up. Nothing unread left here.</p>
     {% endif %}
-    {% if llm_paused %}
-    <p class="notice">Scoring is paused: <b>{{ llm_paused.key }}</b> is unavailable. Retrying {{ llm_paused.paused_until | until }} (attempt {{ llm_paused.failures }}).
+    {% if llm.resumes %}
+    <p class="notice">Scoring is paused: {% if llm.chain | length > 1 %}all your LLMs are unavailable. Retrying <b>{{ llm.resumes.key }}</b>{% else %}<b>{{ llm.resumes.key }}</b> is unavailable. Retrying{% endif %} {{ llm.resumes.paused_until | until }} (attempt {{ llm.resumes.failures }}).
       {% if pending %}{{ pending }} post{{ 's' if pending != 1 }} queued, nothing is lost.{% endif %}</p>
+    {% elif llm.paused %}
+    <p class="notice"><b>{{ llm.paused.key }}</b> is busy, so posts are scored with <b>{{ llm.active }}</b> for now. Switching back {{ llm.paused.paused_until | until }} or later.</p>
     {% elif pending %}<p class="notice">{{ pending }} new post{{ 's' if pending != 1 }} waiting to be scored.</p>{% endif %}
 
     <div id="cards">

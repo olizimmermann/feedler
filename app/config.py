@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     base_url: str = "http://localhost:8000"
 
     default_llm_provider: str = "anthropic"
+    # Providers new users fall back to, in order, while their own is busy (comma separated)
+    default_llm_fallbacks: str = ""
 
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5"
@@ -41,6 +43,11 @@ class Settings(BaseSettings):
     @property
     def reddit_oauth(self) -> bool:
         return bool(self.reddit_client_id and self.reddit_client_secret)
+
+    @property
+    def fallback_providers(self) -> list[str]:
+        names = [p.strip().lower() for p in self.default_llm_fallbacks.split(",")]
+        return [p for p in dict.fromkeys(names) if p in PROVIDERS and p != self.default_llm_provider]
 
     def provider_configured(self, provider: str) -> bool:
         return {

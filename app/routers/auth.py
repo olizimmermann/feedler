@@ -56,7 +56,9 @@ async def register(
     user = User(email=email, password_hash=hash_password(password), is_admin=is_first)
     db.add(user)
     await db.flush()
-    db.add(UserSettings(user_id=user.id, llm_provider=get_settings().default_llm_provider))
+    settings = get_settings()
+    db.add(UserSettings(user_id=user.id, llm_provider=settings.default_llm_provider,
+                        llm_fallbacks=settings.fallback_providers))
     await db.commit()
     request.session.clear()
     request.session["user_id"] = user.id

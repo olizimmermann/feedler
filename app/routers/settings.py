@@ -52,9 +52,9 @@ async def _settings_context(db: AsyncSession, user: User) -> dict:
             .limit(20)
         )
     ).all()
-    llm_paused = await user_llm_status(db, user.settings.llm_provider, user.settings.llm_model, settings)
+    llm_status = await user_llm_status(db, user.settings, settings)
     return dict(
-        llm_paused=llm_paused,
+        llm=llm_status,
         providers=[(p, settings.provider_configured(p), settings.default_model(p)) for p in PROVIDERS],
         usage=usage,
         last_call=last_error,
@@ -70,7 +70,8 @@ async def settings_page(request: Request, user: User = Depends(current_user), db
 
 
 @router.post("/llm")
-async def update_llm(provider: str = Form(...), model: str = Form(""), threshold: int = Form(60),
+async def update_llm(provider: str = Form(...), model: str = Form(""), fallbacks: list[str] = Form([]),
+                     threshold: int = Form(60),
                      comments_top_n: int = Form(10), user: User = Depends(current_user),
                      db: AsyncSession = Depends(get_db)):
     if provider not in PROVIDERS:
@@ -78,6 +79,7 @@ async def update_llm(provider: str = Form(...), model: str = Form(""), threshold
     us = user.settings
     us.llm_provider = provider
     us.llm_model = model.strip() or None
+    us.llm_fallbacks = [f for f in dict.fromkeys(fallbacks) if f in PROVIDERS and f != provider]
     us.relevance_threshold = max(0, min(100, threshold))
     us.comments_top_n = max(0, min(50, comments_top_n))
     await db.commit()

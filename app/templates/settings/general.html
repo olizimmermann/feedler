@@ -19,6 +19,18 @@
       <label>Model <span class="muted small">(blank = default)</span>
         <input name="model" value="{{ us.llm_model or '' }}" placeholder="{% for p, ok, default in providers %}{% if p == us.llm_provider %}{{ default }}{% endif %}{% endfor %}">
       </label>
+      {% for slot in range(2) %}
+      {% set current = us.llm_fallbacks[slot] if us.llm_fallbacks | length > slot else '' %}
+      <label>Fallback {{ slot + 1 }} <span class="muted small">(used while the one above is busy)</span>
+        <select name="fallbacks">
+          <option value="">none</option>
+          {% for p, ok, default in providers %}
+          <option value="{{ p }}" {{ 'selected' if current == p }} {{ 'disabled' if not ok and current != p }}>
+            {{ p }}{{ ' · ' ~ default if ok and default else '' }}{{ '' if ok else ' (not configured)' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endfor %}
       <label>Relevance threshold <span class="muted small">(0-100, shown in "For you")</span>
         <input type="number" name="threshold" min="0" max="100" value="{{ us.relevance_threshold }}">
       </label>
@@ -28,8 +40,10 @@
     </div>
     <div><button class="primary">Save</button></div>
   </form>
-  {% if llm_paused %}
-  <p class="notice small">Paused: <b>{{ llm_paused.key }}</b> is temporarily unavailable. Retrying {{ llm_paused.paused_until | until }} (attempt {{ llm_paused.failures }}, waits grow up to 30 min). Unscored posts stay queued.<br><span class="muted">{{ llm_paused.last_error }}</span></p>
+  {% if llm.resumes %}
+  <p class="notice small">Paused: {% if llm.chain | length > 1 %}all your LLMs are temporarily unavailable. Next try is <b>{{ llm.resumes.key }}</b>{% else %}<b>{{ llm.resumes.key }}</b> is temporarily unavailable. Retrying{% endif %} {{ llm.resumes.paused_until | until }} (attempt {{ llm.resumes.failures }}, waits grow up to 30 min). Unscored posts stay queued.<br><span class="muted">{{ llm.resumes.last_error }}</span></p>
+  {% elif llm.paused %}
+  <p class="notice small"><b>{{ llm.paused.key }}</b> is busy, so <b>{{ llm.active }}</b> is scoring for now. Retrying {{ llm.paused.key }} {{ llm.paused.paused_until | until }} (attempt {{ llm.paused.failures }}).<br><span class="muted">{{ llm.paused.last_error }}</span></p>
   {% elif last_call and not last_call.ok %}
   <p class="flash error small">Last LLM call failed ({{ last_call.created_at | ago }}): {{ last_call.error }}</p>
   {% endif %}

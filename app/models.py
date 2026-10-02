@@ -48,6 +48,8 @@ class UserSettings(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     llm_provider: Mapped[str] = mapped_column(String(32), nullable=False)
     llm_model: Mapped[str | None] = mapped_column(String(128))  # None = provider default
+    # Providers to use, in order, while llm_provider is busy (each with its default model)
+    llm_fallbacks: Mapped[list[str]] = mapped_column(ARRAY(String(32)), default=list, server_default="{}", nullable=False)
     relevance_threshold: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     comments_top_n: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     votes_since_refine: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

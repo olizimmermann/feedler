@@ -8,10 +8,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.llm.backoff import paused_status, record_failure, record_success, status_key
+from app.llm.backoff import first_available, record_failure, record_success, status_key
 from app.llm.base import LLMError
 from app.llm.prompts import CLASSIFY_SCHEMA, CLASSIFY_SYSTEM, InterestSpec, PostSpec, build_classify_prompt
-from app.llm.registry import get_provider
+from app.llm.registry import get_provider_chain
 from app.models import (
     Evaluation, Interest, Item, ItemSource, PreferenceProfile, Source, Subscription, User, UserSettings,
 )
@@ -82,14 +82,13 @@ async def classify_user(
 ) -> int:
     us = await db.get(UserSettings, user.id)
     try:
-        provider = get_provider(us.llm_provider, us.llm_model, settings=settings)
+        chain = get_provider_chain(us, settings=settings)
     except LLMError as e:
         log.warning("user %s: %s", user.id, e)
         return 0
 
-    key = status_key(provider)
-    if paused := await paused_status(db, key):
-        log.debug("user %s: %s paused until %s", user.id, key, paused.paused_until)
+    if not await first_available(db, chain):
+        log.debug("user %s: all providers paused (%s)", user.id, ", ".join(status_key(p) for p in chain))
         return 0
 
     interests = (
@@ -99,14 +98,13 @@ async def classify_user(
         return 0
     profile = await latest_profile(db, user.id)
 
-    batch_size = settings.batch_size(provider.name)
     subscribed = select(Subscription.source_id).where(Subscription.user_id == user.id)
     items = (
         await db.scalars(
             select(Item)
             .where(*queue_filter(user.id, settings))
             .order_by(Item.published_at.desc())
-            .limit(batch_size * max_batches)
+            .limit(max(settings.batch_size(p.name) for p in chain) * max_batches)
         )
     ).all()
     if not items:
@@ -116,9 +114,14 @@ async def classify_user(
     interest_specs = [
         InterestSpec(i.id, i.name, i.description, i.source.label if i.source else None) for i in interests
     ]
-    done = 0
-    for start in range(0, len(items), batch_size):
-        batch = items[start : start + batch_size]
+    done, start, calls = 0, 0, 0
+    while start < len(items) and calls < max_batches:
+        # Use the first provider that isn't paused; a busy one hands the batch to the next
+        provider = await first_available(db, chain)
+        if provider is None:
+            break
+        key = status_key(provider)
+        batch = items[start : start + settings.batch_size(provider.name)]
         posts = [_post_spec(item, interests, sub_source_ids) for item in batch]
         prompt = build_classify_prompt(
             interest_specs, profile.text if profile else None, posts, settings.item_char_budget(provider.name)
@@ -129,15 +132,19 @@ async def classify_user(
             )
         except LLMError as e:
             if e.retryable:
-                # Temporary trouble: pause this model and leave the items queued
+                # Temporary trouble: pause this model and try the next one in the chain.
+                # If all are paused, the items stay queued.
                 status = await record_failure(db, key, e)
                 log.info("%s unavailable (attempt %d), retrying after %s: %s",
                          key, status.failures, status.paused_until.strftime("%H:%M:%S"), e)
-            else:
-                record_call(db, user.id, provider, "classify", error=e)
-                log.warning("classification failed for user %s: %s", user.id, e)
+                await db.commit()
+                continue
+            record_call(db, user.id, provider, "classify", error=e)
+            log.warning("classification failed for user %s: %s", user.id, e)
             await db.commit()
             break
+        calls += 1
+        start += len(batch)
         record_call(db, user.id, provider, "classify", result=result)
         await record_success(db, key)
 

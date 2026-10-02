@@ -92,7 +92,7 @@ The *profile model* is used only for the occasional preference-profile rewrite, 
 
 ### Free option: Gemini
 
-Google's Gemini API has a free tier. Create a key at <https://aistudio.google.com/apikey>, put it into `GEMINI_API_KEY`, and set `DEFAULT_LLM_PROVIDER=gemini`. The example config uses `gemini-3.5-flash-lite` for scoring and `gemini-3.8-flash` for profile rewrites. Free-tier requests are the first to be turned away when Google is busy. Feedler then waits and retries, as described under *When the LLM is busy*.
+Google's Gemini API has a free tier. Create a key at <https://aistudio.google.com/apikey>, put it into `GEMINI_API_KEY`, and set `DEFAULT_LLM_PROVIDER=gemini`. The example config uses `gemini-3.5-flash-lite` for scoring and `gemini-3.8-flash` for profile rewrites. Free-tier requests are the first to be turned away when Google is busy. Feedler then switches to a fallback provider if you set one (for example `DEFAULT_LLM_FALLBACKS=ollama`), or waits and retries, as described under *When the LLM is busy*.
 
 ### Local models with Ollama
 
@@ -122,6 +122,12 @@ Without credentials, Feedler reads each subreddit's public RSS feed. That feed h
 ## When the LLM is busy
 
 Posts that haven't been scored yet wait in a queue in the database. Temporary errors pause scoring for that provider and model, for all users: an overloaded model (e.g. Gemini's free tier returning 503), rate limits, network errors, or an Ollama model that is still downloading. The waits grow from 1 minute to 2, 4 and 8, up to 30 minutes, or follow the provider's `Retry-After` hint. No requests are sent while paused, and the first successful call resets the wait. The feed and Settings show when the next attempt is and how many posts are queued. Posts fetched after you subscribed stay queued for up to 14 days, so an outage delays scoring without losing posts. Permanent errors, such as a wrong API key or an unknown model, are shown in Settings instead.
+
+### Fallback providers
+
+Each user can pick up to two fallbacks under **Settings → LLM & profile**, e.g. Gemini first and Ollama as the fallback. While a provider is paused for one of the temporary errors above, its posts and profile rewrites go to the next fallback that isn't paused, using that provider's default model. Once the pause ends, Feedler switches back on its own. The feed and Settings show which model is scoring in the meantime, and each card's *Why?* shows the model that scored it. Posts only stay queued when every provider in the chain is busy. Permanent errors don't fail over, so a wrong key still shows up in Settings.
+
+`DEFAULT_LLM_FALLBACKS` (comma separated, e.g. `ollama`) sets the fallbacks for new users. Existing users choose theirs in Settings.
 
 ## Services
 

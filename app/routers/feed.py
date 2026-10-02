@@ -116,9 +116,9 @@ async def feed_page(request: Request, user: User = Depends(current_user), db: As
     interests = (await db.scalars(select(Interest).where(Interest.user_id == user.id).order_by(Interest.name))).all()
     pending = await db.scalar(select(func.count(Item.id)).where(*queue_filter(user.id, get_settings())))
     us = user.settings
-    llm_paused = await user_llm_status(db, us.llm_provider, us.llm_model, get_settings())
+    llm_status = await user_llm_status(db, us, get_settings())
     return render(
-        request, "feed.html", cards=cards, llm_paused=llm_paused, f=f, next_offset=PAGE_SIZE if len(cards) == PAGE_SIZE else None,
+        request, "feed.html", cards=cards, llm=llm_status, f=f, next_offset=PAGE_SIZE if len(cards) == PAGE_SIZE else None,
         sources=[s.source for s in subs], interests=interests, pending=pending,
     )
 

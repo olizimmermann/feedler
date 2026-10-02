@@ -42,3 +42,24 @@ def get_provider(
     if provider == "openai":
         return OpenAICompatProvider("openai", model, settings.openai_api_key)
     return OpenAICompatProvider("ollama", model, "ollama", base_url=settings.ollama_base_url)
+
+
+def get_provider_chain(us, purpose: str = "classify", settings: Settings | None = None) -> list[LLMProvider]:
+    """The user's provider followed by their fallbacks (each with its default model), in order.
+
+    Fallbacks that aren't configured are skipped. Raises LLMError if nothing is usable.
+    """
+    settings = settings or get_settings()
+    chain: list[LLMProvider] = []
+    first_error: LLMError | None = None
+    for name, model in [(us.llm_provider, us.llm_model), *((f, None) for f in us.llm_fallbacks or [])]:
+        try:
+            provider = get_provider(name, model, purpose=purpose, settings=settings)
+        except LLMError as e:
+            first_error = first_error or e
+            continue
+        if all((p.name, p.model) != (provider.name, provider.model) for p in chain):
+            chain.append(provider)
+    if not chain:
+        raise first_error or LLMError("No LLM provider is configured")
+    return chain
