@@ -16,6 +16,7 @@ from app.fetchers.article import extract_article
 from app.fetchers.reddit import RedditFetcher
 from app.llm.backoff import user_llm_status
 from app.pipeline.classify import queue_filter
+from app.pipeline.engagement import EVENTS, record_activity, record_open
 from app.models import Evaluation, Interest, Item, ItemSource, SavedItem, Subscription, User, UserSettings, Vote
 from app.routers.saved import archive_saved_item
 from app.templating import render
@@ -162,10 +163,12 @@ async def item_detail(request: Request, item_id: int, v: str = "feed", user: Use
     card = await get_card(db, user, item_id)
     if card.ev.read_at is None:
         card.ev.read_at = datetime.now(UTC)
-        await db.commit()
+    if user.settings.track_reading:
+        await record_open(db, user.id, item_id)
+    await db.commit()
     is_reddit = card.item.external_id.startswith("reddit:")
     return render(request, "item.html", card=card, view=v if v in ("feed", "filtered", "all") else "feed",
-                  kind=reader_kind(card.item), is_reddit=is_reddit)
+                  kind=reader_kind(card.item), is_reddit=is_reddit, track=user.settings.track_reading)
 
 
 @router.get("/items/{item_id}/article")
@@ -261,10 +264,31 @@ async def vote(request: Request, item_id: int, value: int = Form(...), note: str
 @router.post("/items/{item_id}/read")
 async def mark_read(request: Request, item_id: int, user: User = Depends(current_user),
                     db: AsyncSession = Depends(get_db)):
+    """Called when the original is opened, from the feed or the reader."""
     ev = await db.scalar(select(Evaluation).where(Evaluation.item_id == item_id, Evaluation.user_id == user.id))
-    if ev and ev.read_at is None:
+    if not ev:
+        return Response(status_code=204)
+    if ev.read_at is None:
         ev.read_at = datetime.now(UTC)
-        await db.commit()
+    if user.settings.track_reading:
+        await record_activity(db, user.settings, await db.get(Item, item_id), event="original")
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/items/{item_id}/engage")
+async def engage(item_id: int, seconds: int = Form(0), scroll: int = Form(0), event: str = Form(""),
+                 user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Reader pings: active reading time, scroll depth, and outbound link or comment events."""
+    if event and event not in EVENTS:
+        raise HTTPException(400)
+    if not user.settings.track_reading:
+        return Response(status_code=204)
+    # Only items in this user's own feed, so nobody can attach data to arbitrary items
+    if not await db.scalar(select(Evaluation.id).where(Evaluation.item_id == item_id, Evaluation.user_id == user.id)):
+        raise HTTPException(404)
+    await record_activity(db, user.settings, await db.get(Item, item_id), seconds=seconds, scroll=scroll, event=event)
+    await db.commit()
     return Response(status_code=204)
 
 

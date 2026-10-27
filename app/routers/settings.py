@@ -3,7 +3,7 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +11,7 @@ from app.auth import current_user
 from app.config import PROVIDERS, get_settings
 from app.db import get_db
 from app.llm.backoff import user_llm_status
-from app.models import LLMCall, PreferenceProfile, User
+from app.models import Engagement, LLMCall, PreferenceProfile, User
 from app.pipeline.classify import latest_profile
 from app.pipeline.profile import ProfileError, refine_profile
 from app.templating import render
@@ -53,7 +53,9 @@ async def _settings_context(db: AsyncSession, user: User) -> dict:
         )
     ).all()
     llm_status = await user_llm_status(db, user.settings, settings)
+    tracked = await db.scalar(select(func.count()).select_from(Engagement).where(Engagement.user_id == user.id))
     return dict(
+        tracked=tracked,
         llm=llm_status,
         providers=[(p, settings.provider_configured(p), settings.default_model(p)) for p in PROVIDERS],
         usage=usage,
@@ -84,6 +86,24 @@ async def update_llm(provider: str = Form(...), model: str = Form(""), fallbacks
     us.comments_top_n = max(0, min(50, comments_top_n))
     await db.commit()
     return RedirectResponse("/settings?msg=Saved", status_code=303)
+
+
+@router.post("/reading")
+async def update_reading(track: bool = Form(False), user: User = Depends(current_user),
+                         db: AsyncSession = Depends(get_db)):
+    user.settings.track_reading = track
+    if not track:
+        user.settings.signals_since_refine = 0
+    await db.commit()
+    return RedirectResponse("/settings?msg=Saved#reading", status_code=303)
+
+
+@router.post("/reading/clear")
+async def clear_reading(user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(Engagement).where(Engagement.user_id == user.id))
+    user.settings.signals_since_refine = 0
+    await db.commit()
+    return RedirectResponse("/settings?msg=Reading+history+deleted#reading", status_code=303)
 
 
 @router.post("/profile")

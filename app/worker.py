@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.llm.ollama_pull import ensure_models
 from app.pipeline.classify import classify_all
+from app.pipeline.engagement import prune_engagements
 from app.pipeline.ingest import Fetchers, poll_due_sources, refresh_comments
 from app.pipeline.profile import refine_due
 
@@ -39,6 +40,7 @@ async def main() -> None:
     scheduler.add_job(refine_due, "interval", minutes=10, args=[SessionLocal, settings], id="refine")
     # Nightly pass for anyone with at least one unprocessed vote
     scheduler.add_job(refine_due, "cron", hour=3, args=[SessionLocal, settings, 1], id="refine_nightly")
+    scheduler.add_job(prune_engagements, "cron", hour=4, args=[SessionLocal], id="prune_engagements")
     scheduler.start()
     log.info("worker started")
 

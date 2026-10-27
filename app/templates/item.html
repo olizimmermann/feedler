@@ -14,7 +14,7 @@
 {% endblock %}
 {% block main_class %}reader-main{% endblock %}
 {% block content %}
-<article class="reader" data-item="{{ item.id }}">
+<article class="reader" data-item="{{ item.id }}"{% if track %} data-engage-url="/items/{{ item.id }}/engage"{% endif %}>
   <div class="meta">
     <span class="rel {{ ev.relevance | score_class }}">{{ ev.relevance }}</span>
     {% if item.author %}<span>{{ 'u/' if is_reddit }}{{ item.author }}</span>{% endif %}
