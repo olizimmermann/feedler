@@ -25,6 +25,8 @@ class FetchedItem:
     num_comments: int | None = None
     comments_text: str = ""
     comments_fetched: bool = False
+    # url is a stand-in (e.g. the feed URL for an entry without a usable link): don't dedupe on it
+    url_is_fallback: bool = False
     extra: dict = field(default_factory=dict)
 
 

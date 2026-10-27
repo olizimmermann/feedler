@@ -274,3 +274,16 @@ async def test_security_headers_and_no_inline_js(client_factory):
 
     r = await client.post("/saved", data={"csrf_token": token, "url": "https://\tjavascript:alert(1)"})
     assert r.status_code == 400
+
+
+def test_templates_need_no_unsafe_inline():
+    """The CSP blocks inline scripts, handlers and styles: keep them in app.js / app.css."""
+    from pathlib import Path
+
+    templates = Path(__file__).parents[1] / "app/templates"
+    for path in templates.rglob("*.html"):
+        html = path.read_text()
+        assert not re.search(r"\son[a-z]+\s*=", html), path
+        assert not re.search(r"\sstyle\s*=", html), path
+        assert not re.search(r"<script(?![^>]*\ssrc=)", html), path
+        assert "<style" not in html and "javascript:" not in html and "hx-on" not in html, path

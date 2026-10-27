@@ -10,6 +10,7 @@ import httpx
 
 from app.fetchers.article import extract_article
 from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff, safe_http_url
+from app.fetchers.net import fetch_client
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def html_to_text(value: str, paragraphs: bool = False) -> str:
 
 class RSSFetcher:
     def __init__(self, user_agent: str, client: httpx.AsyncClient | None = None):
-        self.client = client or httpx.AsyncClient(
+        self.client = client or fetch_client(
             timeout=30, headers={"User-Agent": user_agent}, follow_redirects=True
         )
 
@@ -106,6 +107,7 @@ def parse_entry(e, feed_url: str) -> FetchedItem | None:
     return FetchedItem(
         external_id=f"rss:{ext}",
         url=url,
+        url_is_fallback=link is None,
         title=title or link,
         body=body,
         author=e.get("author"),

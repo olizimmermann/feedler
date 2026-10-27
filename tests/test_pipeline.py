@@ -79,6 +79,17 @@ async def test_upsert_rejects_non_http_urls(db):
     assert item.url == "https://blog.example.com/ok" and item.discussion_url is None
 
 
+async def test_upsert_keeps_linkless_entries_apart(db):
+    rss = await make_source(db, "rss", "https://blog.example.com/feed")
+    entries = [fetched(f"rss:{n}", "https://blog.example.com/feed", title=n) for n in ("one", "two")]
+    for e in entries:
+        e.url_is_fallback = True
+    assert await upsert_items(db, rss, entries) == 2
+    assert await upsert_items(db, rss, [fetched("rss:three", "https://blog.example.com/feed", title="3")]) == 0
+    await db.commit()
+    assert await db.scalar(select(func.count(Item.id))) == 2  # a real link to the feed URL still dedupes
+
+
 async def test_migration_neutralises_stored_script_urls(db):
     import importlib.util
     from pathlib import Path

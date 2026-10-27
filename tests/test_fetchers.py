@@ -5,8 +5,16 @@ from app.llm.base import LLMError, parse_json
 from app.llm.prompts import InterestSpec, PostSpec, build_classify_prompt
 from app.routers.sources import parse_source
 
+import asyncio
+
 import feedparser
+import httpcore
+import httpx
 import pytest
+
+from app.config import get_settings
+from app.fetchers.article import MAX_HTML_BYTES, fetch_html
+from app.fetchers.net import _PublicOnlyBackend, fetch_client, is_public_ip
 
 
 def test_reddit_public_rss(fixture_bytes):
@@ -187,3 +195,76 @@ def test_reader_kind_and_comment_lines():
     parsed = parse_comment_lines("[+40] u/a: fixed it\nu/b: same here")
     assert parsed[0] == {"score": "+40", "author": "a", "text": "fixed it"}
     assert parsed[1] == {"score": None, "author": "b", "text": "same here"}
+
+
+@pytest.mark.parametrize("ip, public", [
+    ("93.184.215.14", True), ("2606:2800:21f:cb07:6820:80da:af6b:8b2c", True),
+    ("127.0.0.1", False), ("10.1.2.3", False), ("172.16.0.1", False), ("192.168.1.1", False),
+    ("169.254.169.254", False), ("100.64.0.1", False), ("0.0.0.0", False), ("224.0.0.1", False),
+    ("::1", False), ("fe80::1", False), ("fc00::1", False), ("::ffff:127.0.0.1", False),
+    ("::ffff:169.254.169.254", False), ("2002:7f00:1::", False), ("not-an-ip", False),
+])
+def test_is_public_ip(ip, public):
+    assert is_public_ip(ip) is public
+
+
+class _RecordingBackend(httpcore.AsyncNetworkBackend):
+    def __init__(self):
+        self.dialled = []
+
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        self.dialled.append(host)
+        return "stream"
+
+
+async def test_public_only_backend_dials_the_vetted_address(monkeypatch):
+    answers = {"good.test": ["93.184.215.14"], "rebind.test": ["93.184.215.14", "10.0.0.1"],
+               "meta.test": ["169.254.169.254"]}
+
+    async def getaddrinfo(host, port, **kwargs):
+        return [(0, 0, 0, "", (ip, port)) for ip in answers[host]]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    inner = _RecordingBackend()
+    backend = _PublicOnlyBackend(inner)
+    assert await backend.connect_tcp("good.test", 443) == "stream"
+    assert inner.dialled == ["93.184.215.14"]  # the IP, so a second lookup can't swap it
+    for host in ("rebind.test", "meta.test"):
+        with pytest.raises(httpcore.ConnectError):
+            await backend.connect_tcp(host, 443)
+    assert inner.dialled == ["93.184.215.14"]
+
+
+async def test_fetch_client_refuses_private_addresses(monkeypatch):
+    async def handle(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/"
+    try:
+        for target in (url, url.replace("127.0.0.1", "localhost")):
+            async with fetch_client() as client:
+                with pytest.raises(httpx.ConnectError):
+                    await client.get(target)
+        monkeypatch.setattr(get_settings(), "fetch_allow_private_addresses", True)
+        async with fetch_client() as client:
+            assert (await client.get(url)).text == "ok"
+    finally:
+        server.close()
+
+
+async def test_fetch_html_stops_at_size_cap():
+    chunk = b"<p>" + b"a" * 65536
+
+    async def stream():
+        for _ in range(MAX_HTML_BYTES // len(chunk) + 50):
+            yield chunk
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, headers={"content-type": "text/html; charset=utf-8"}, content=stream()))
+    async with httpx.AsyncClient(transport=transport) as client:
+        html = await fetch_html(client, "https://ex.com/huge")
+    assert len(html) == MAX_HTML_BYTES

@@ -1,6 +1,5 @@
 import logging
 
-import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import func, select
@@ -11,6 +10,7 @@ from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.fetchers.article import extract_title_and_text
 from app.fetchers.base import safe_http_url
+from app.fetchers.net import fetch_client
 from app.models import SavedItem, User
 from app.templating import render
 
@@ -33,7 +33,7 @@ async def archive_saved_item(saved_id: int, fallback_text: str | None = None) ->
         saved = await db.get(SavedItem, saved_id)
         if not saved:
             return
-        async with httpx.AsyncClient(headers={"User-Agent": get_settings().reddit_user_agent}) as client:
+        async with fetch_client(headers={"User-Agent": get_settings().reddit_user_agent}) as client:
             title, text = await extract_title_and_text(client, saved.url)
         saved.archived_text = text or fallback_text or saved.archived_text
         if title and (not saved.title or saved.title == saved.url):

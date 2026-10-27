@@ -16,6 +16,7 @@ import httpx
 
 from app.config import Settings
 from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff, safe_http_url
+from app.fetchers.net import fetch_client
 from app.fetchers.rss import html_to_text
 
 log = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ COMMENT_CHAR_LIMIT = 4000  # the LLM prompt has its own, smaller budget
 class RedditFetcher:
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None):
         self.settings = settings
-        self.client = client or httpx.AsyncClient(
+        self.client = client or fetch_client(
             timeout=30, headers={"User-Agent": settings.reddit_user_agent}, follow_redirects=True
         )
         self._token: str | None = None

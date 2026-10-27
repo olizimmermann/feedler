@@ -11,10 +11,16 @@ MAX_HTML_BYTES = 5_000_000
 
 async def fetch_html(client: httpx.AsyncClient, url: str) -> str | None:
     try:
-        resp = await client.get(url, timeout=20, follow_redirects=True)
-        if resp.status_code != 200 or "html" not in resp.headers.get("content-type", "html"):
-            return None
-        return resp.text[:MAX_HTML_BYTES]
+        async with client.stream("GET", url, timeout=20, follow_redirects=True) as resp:
+            if resp.status_code != 200 or "html" not in resp.headers.get("content-type", "html"):
+                return None
+            # Stop reading at the cap instead of buffering whatever size the server sends
+            body = bytearray()
+            async for chunk in resp.aiter_bytes():
+                body += chunk
+                if len(body) >= MAX_HTML_BYTES:
+                    break
+            return bytes(body[:MAX_HTML_BYTES]).decode(resp.encoding or "utf-8", errors="replace")
     except httpx.HTTPError as e:
         log.info("article fetch failed for %s: %s", url, e)
         return None
