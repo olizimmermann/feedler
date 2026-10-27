@@ -9,7 +9,7 @@ import feedparser
 import httpx
 
 from app.fetchers.article import extract_article
-from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff
+from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff, safe_http_url
 
 log = logging.getLogger(__name__)
 
@@ -84,9 +84,12 @@ class RSSFetcher:
 
 
 def parse_entry(e, feed_url: str) -> FetchedItem | None:
-    link = e.get("link")
+    link = safe_http_url(e.get("link"))
     title = html_to_text(e.get("title", ""))
     if not link and not title:
+        return None
+    url = link or safe_http_url(feed_url)
+    if not url:
         return None
     guid = e.get("id") or link or title
     ext = hashlib.sha256(f"{feed_url}|{guid}".encode()).hexdigest()[:40]
@@ -102,10 +105,10 @@ def parse_entry(e, feed_url: str) -> FetchedItem | None:
 
     return FetchedItem(
         external_id=f"rss:{ext}",
-        url=link or feed_url,
+        url=url,
         title=title or link,
         body=body,
         author=e.get("author"),
-        discussion_url=e.get("comments"),
+        discussion_url=safe_http_url(e.get("comments")),
         published_at=published,
     )

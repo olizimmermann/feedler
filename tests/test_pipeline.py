@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.config import Settings
 from app.fetchers.base import FetchedItem
@@ -66,6 +66,67 @@ async def test_upsert_dedupes_by_external_id_and_canonical_url(db):
     merged = await db.scalar(select(Item).where(Item.external_id == "reddit:t3_1"))
     links = (await db.scalars(select(ItemSource.source_id).where(ItemSource.item_id == merged.id))).all()
     assert sorted(links) == sorted([reddit.id, rss.id])
+
+
+async def test_upsert_rejects_non_http_urls(db):
+    rss = await make_source(db, "rss", "https://blog.example.com/feed")
+    bad = fetched("rss:bad", "javascript:alert(1)")
+    good = fetched("rss:good", "https://blog.example.com/ok")
+    good.discussion_url = "data:text/html,x"
+    assert await upsert_items(db, rss, [bad, good]) == 1
+    await db.commit()
+    item = await db.scalar(select(Item))
+    assert item.url == "https://blog.example.com/ok" and item.discussion_url is None
+
+
+async def test_migration_neutralises_stored_script_urls(db):
+    import importlib.util
+    from pathlib import Path
+
+    from app.models import SavedItem
+
+    path = Path(__file__).parents[1] / "alembic/versions/0006_safe_item_urls.py"
+    spec = importlib.util.spec_from_file_location("m0006", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    user = await make_user(db)
+    rss = await make_source(db, "rss", "https://blog.example.com/feed")
+    reddit = await make_source(db)
+    now = datetime.now(UTC)
+    rows = {
+        "disc": Item(external_id="a", url="javascript:alert(1)", canonical_url="x",
+                     discussion_url="https://ex.com/d", title="t", published_at=now),
+        "feed": Item(external_id="b", url="JavaScript:alert(1)", canonical_url="x",
+                     discussion_url="javascript:x", title="t", published_at=now),
+        "sub": Item(external_id="c", url="data:text/html,x", canonical_url="x", title="t", published_at=now),
+        "orphan": Item(external_id="d", url="vbscript:x", canonical_url="x", title="t", published_at=now),
+        "fine": Item(external_id="e", url="https://ex.com/ok", canonical_url="x",
+                     discussion_url="https://ex.com/okd", title="t", published_at=now),
+    }
+    db.add_all(rows.values())
+    await db.flush()
+    db.add_all([ItemSource(item_id=rows["feed"].id, source_id=rss.id),
+                ItemSource(item_id=rows["sub"].id, source_id=reddit.id)])
+    db.add_all([
+        SavedItem(user_id=user.id, item_id=rows["disc"].id, url="javascript:alert(1)", title="s1"),
+        SavedItem(user_id=user.id, item_id=None, url="javascript:alert(2)", title="s2"),
+    ])
+    await db.commit()
+
+    for stmt in migration.SQL:
+        await db.execute(text(stmt))
+    await db.commit()
+    db.expunge_all()
+
+    urls = {i.external_id: (i.url, i.discussion_url) for i in (await db.scalars(select(Item))).all()}
+    assert urls == {
+        "a": ("https://ex.com/d", "https://ex.com/d"),
+        "b": ("https://blog.example.com/feed", None),
+        "c": ("https://www.reddit.com/r/prusa3d", None),
+        "e": ("https://ex.com/ok", "https://ex.com/okd"),
+    }
+    assert (await db.scalars(select(SavedItem.url))).all() == ["https://ex.com/d"]
 
 
 async def setup_feed(db, n_items=3):

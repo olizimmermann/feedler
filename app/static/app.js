@@ -152,6 +152,21 @@
     } catch (_) { /* fall through to the link */ }
   });
 
+  // Replacements for inline handlers, which the Content-Security-Policy blocks:
+  // data-confirm on a form or submit button asks first, data-busy-text relabels the button
+  // that submitted, data-select-on-click selects an input's text.
+  document.addEventListener("submit", (e) => {
+    const btn = e.submitter;
+    const message = (btn && btn.dataset.confirm) || e.target.dataset.confirm;
+    if (message && !window.confirm(message)) { e.preventDefault(); return; }
+    if (btn && btn.dataset.busyText) btn.textContent = btn.dataset.busyText;
+  });
+
+  document.addEventListener("click", (e) => {
+    const input = e.target.closest && e.target.closest("input[data-select-on-click]");
+    if (input) input.select();
+  });
+
   // Close the phone filter panel when tapping outside it
   document.addEventListener("click", (e) => {
     document.querySelectorAll("details.filter-sheet[open]").forEach((d) => {

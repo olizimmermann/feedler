@@ -1,4 +1,4 @@
-from app.fetchers.base import canonicalize_url
+from app.fetchers.base import canonicalize_url, safe_http_url
 from app.fetchers.reddit import parse_comments, parse_post, parse_rss
 from app.fetchers.rss import parse_entry
 from app.llm.base import LLMError, parse_json
@@ -54,6 +54,63 @@ def test_rss_entry():
     assert item.body == "Some text"
     assert item.external_id.startswith("rss:")
     assert item.published_at.year == 2024
+
+
+@pytest.mark.parametrize("url, expected", [
+    ("https://ex.com/a?b=1", "https://ex.com/a?b=1"),
+    ("  HTTP://Ex.com/a  ", "HTTP://Ex.com/a"),
+    ("javascript:alert(document.domain)", None),
+    ("JavaScript:alert(1)", None),
+    ("java\tscript:alert(1)", None),
+    ("\x01javascript:alert(1)", None),
+    ("https://ex.com/\nx", None),
+    ("data:text/html,<script>alert(1)</script>", None),
+    ("vbscript:msgbox(1)", None),
+    ("//evil.example/x", None),
+    ("/relative/path", None),
+    ("https:///no-host", None),
+    ("https://[::1", None),
+    ("", None),
+    (None, None),
+])
+def test_safe_http_url(url, expected):
+    assert safe_http_url(url) == expected
+
+
+def test_rss_entry_drops_script_urls():
+    feed = feedparser.parse(
+        b"""<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>
+        <item><title>XSS</title><link>javascript:alert(document.domain)</link><guid>g1</guid>
+        <comments>data:text/html,&lt;script&gt;alert(1)&lt;/script&gt;</comments></item>
+        <item><title>OK</title><link>https://ex.com/b</link><guid>g2</guid>
+        <comments>javascript:alert(1)</comments></item>
+        <item><link>JAVASCRIPT:alert(1)</link><guid>g3</guid></item>
+        </channel></rss>"""
+    )
+    assert feed.entries[0].link == "javascript:alert(document.domain)"  # feedparser passes it through
+    xss, ok, untitled = (parse_entry(e, "https://ex.com/feed") for e in feed.entries)
+    assert xss.url == "https://ex.com/feed" and xss.discussion_url is None
+    assert ok.url == "https://ex.com/b" and ok.discussion_url is None
+    assert untitled is None
+
+
+def test_reddit_post_drops_script_urls():
+    base = {"name": "t3_x", "id": "x", "title": "t", "is_self": False, "created_utc": 1_700_000_000}
+    post = parse_post({**base, "permalink": "/r/a/comments/x/t/", "url": "javascript:alert(1)"})
+    assert post.url == post.discussion_url == "https://www.reddit.com/r/a/comments/x/t/"
+    # A permalink that would move the host off reddit is not a reddit post
+    assert parse_post({**base, "permalink": "@evil.example/x", "url": "https://ex.com"}) is None
+    assert parse_post({**base, "permalink": "//evil.example/x", "url": "https://ex.com"}) is None
+
+    rss = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+      <entry><id>t3_a</id><title>a</title><link href="javascript:alert(1)"/>
+        <content type="html">x</content></entry>
+      <entry><id>t3_b</id><title>b</title><link href="https://www.reddit.com/r/a/comments/b/"/>
+        <content type="html">&lt;a href="javascript:alert(1)"&gt;[link]&lt;/a&gt;</content></entry>
+    </feed>"""
+    items = parse_rss(rss)
+    assert [i.external_id for i in items] == ["reddit:t3_b"]
+    assert items[0].url == "https://www.reddit.com/r/a/comments/b/"
 
 
 def test_canonicalize_url():

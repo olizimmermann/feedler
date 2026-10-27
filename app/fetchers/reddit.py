@@ -15,7 +15,7 @@ import feedparser
 import httpx
 
 from app.config import Settings
-from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff
+from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff, safe_http_url
 from app.fetchers.rss import html_to_text
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class RedditFetcher:
             return FetchResult(items=parse_rss(resp.content))
         data = await self._get_json(f"/r/{subreddit}/new", {"limit": 50})
         items = [parse_post(child["data"]) for child in data["data"]["children"] if child.get("kind") == "t3"]
-        return FetchResult(items=items)
+        return FetchResult(items=[i for i in items if i is not None])
 
     async def fetch_comments_for_reader(self, post_id: str, permalink: str, top_n: int) -> str:
         """Comments for one post a reader just opened: API if configured, else the public RSS."""
@@ -87,10 +87,16 @@ class RedditFetcher:
         return parse_comments(data, top_n)
 
 
-def parse_post(d: dict) -> FetchedItem:
-    permalink = f"https://www.reddit.com{d['permalink']}"
+def parse_post(d: dict) -> FetchedItem | None:
+    path = d.get("permalink") or ""
+    # "/r/..." only: "@evil.example/" or "//evil.example" would move the link off reddit
+    if not path.startswith("/") or path.startswith("//"):
+        return None
+    permalink = safe_http_url(f"https://www.reddit.com{path}")
+    if not permalink:
+        return None
     is_self = d.get("is_self", False)
-    url = permalink if is_self else (d.get("url_overridden_by_dest") or d.get("url") or permalink)
+    url = permalink if is_self else (safe_http_url(d.get("url_overridden_by_dest") or d.get("url")) or permalink)
     body = d.get("selftext") or ""
     if not is_self and not body:
         body = f"[link post to {url}]"
@@ -138,8 +144,10 @@ def parse_rss(content: bytes) -> list[FetchedItem]:
             continue
         html = e.content[0].value if e.get("content") else e.get("summary", "")
         link = _LINK_RE.search(html)
-        permalink = e.get("link")
-        url = link.group(1) if link else permalink
+        permalink = safe_http_url(e.get("link"))
+        if not permalink:
+            continue
+        url = (safe_http_url(link.group(1)) if link else None) or permalink
         body = html_to_text(_TRAILER_RE.sub("", html), paragraphs=True)
         if url != permalink and not body:
             body = f"[link post to {url}]"

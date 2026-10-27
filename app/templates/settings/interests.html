@@ -35,7 +35,7 @@
       <label class="check"><input type="checkbox" name="enabled" value="true" {{ 'checked' if i.enabled }}> Enabled</label>
       <span class="grow"></span>
       <button>Save</button>
-      <button class="link danger" formaction="/settings/interests/{{ i.id }}/delete" onclick="return confirm('Delete this interest?')">Delete</button>
+      <button class="link danger" formaction="/settings/interests/{{ i.id }}/delete" data-confirm="Delete this interest?">Delete</button>
     </div>
   </form>
 </section>

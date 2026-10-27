@@ -10,6 +10,7 @@ from app.auth import current_user
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.fetchers.article import extract_title_and_text
+from app.fetchers.base import safe_http_url
 from app.models import SavedItem, User
 from app.templating import render
 
@@ -67,8 +68,11 @@ async def saved_page(request: Request, q: str = "", tag: str = "", user: User = 
 async def add_url(background: BackgroundTasks, url: str = Form(...), note: str = Form(""), tags: str = Form(""),
                   user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
     url = url.strip()
-    if not url.startswith(("http://", "https://")):
+    if not url.lower().startswith(("http://", "https://")):
         url = "https://" + url
+    url = safe_http_url(url)
+    if not url:
+        raise HTTPException(400, "Not a valid http(s) URL")
     saved = await db.scalar(select(SavedItem).where(SavedItem.user_id == user.id, SavedItem.url == url))
     if not saved:
         saved = SavedItem(user_id=user.id, url=url, title=url, note=note.strip(), tags=parse_tags(tags))

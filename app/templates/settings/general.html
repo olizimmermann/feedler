@@ -59,7 +59,7 @@
     <div class="row">
       <button class="primary">Save edits</button>
       <button formaction="/settings/profile/refine" title="Rewrite the profile from your votes now"
-              onclick="this.textContent='Refining…'">Refine from votes now</button>
+              data-busy-text="Refining…">Refine from votes now</button>
       {% if profile %}<button formaction="/settings/profile/lock">{{ 'Unlock' if profile.locked else 'Lock' }}</button>{% endif %}
       <span class="muted small">{{ us.votes_since_refine }} vote{{ 's' if us.votes_since_refine != 1 }}{% if us.track_reading %} and {{ us.signals_since_refine }} read post{{ 's' if us.signals_since_refine != 1 }}{% endif %} since last refinement</span>
     </div>
@@ -88,7 +88,7 @@
     <span class="muted small">{{ tracked }} post{{ 's' if tracked != 1 }} recorded</span>
   </form>
   {% if tracked %}
-  <form method="post" action="/settings/reading/clear" onsubmit="return confirm('Delete your whole reading history?')">
+  <form method="post" action="/settings/reading/clear" data-confirm="Delete your whole reading history?">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <button class="small">Delete reading history</button>
   </form>
@@ -98,7 +98,7 @@
 <section class="panel">
   <h2>Your RSS output</h2>
   <p class="muted">Subscribe to your filtered feed in any reader app:</p>
-  <input readonly value="{{ settings.base_url.rstrip('/') }}/u/{{ user.feed_token }}/feed.xml" onclick="this.select()" class="mono">
+  <input readonly value="{{ settings.base_url.rstrip('/') }}/u/{{ user.feed_token }}/feed.xml" data-select-on-click class="mono">
 </section>
 
 <section class="panel">
