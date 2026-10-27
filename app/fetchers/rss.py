@@ -9,7 +9,8 @@ import feedparser
 import httpx
 
 from app.fetchers.article import extract_article
-from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff
+from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff, safe_http_url
+from app.fetchers.net import fetch_client
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def html_to_text(value: str, paragraphs: bool = False) -> str:
 
 class RSSFetcher:
     def __init__(self, user_agent: str, client: httpx.AsyncClient | None = None):
-        self.client = client or httpx.AsyncClient(
+        self.client = client or fetch_client(
             timeout=30, headers={"User-Agent": user_agent}, follow_redirects=True
         )
 
@@ -84,9 +85,12 @@ class RSSFetcher:
 
 
 def parse_entry(e, feed_url: str) -> FetchedItem | None:
-    link = e.get("link")
+    link = safe_http_url(e.get("link"))
     title = html_to_text(e.get("title", ""))
     if not link and not title:
+        return None
+    url = link or safe_http_url(feed_url)
+    if not url:
         return None
     guid = e.get("id") or link or title
     ext = hashlib.sha256(f"{feed_url}|{guid}".encode()).hexdigest()[:40]
@@ -102,10 +106,11 @@ def parse_entry(e, feed_url: str) -> FetchedItem | None:
 
     return FetchedItem(
         external_id=f"rss:{ext}",
-        url=link or feed_url,
+        url=url,
+        url_is_fallback=link is None,
         title=title or link,
         body=body,
         author=e.get("author"),
-        discussion_url=e.get("comments"),
+        discussion_url=safe_http_url(e.get("comments")),
         published_at=published,
     )

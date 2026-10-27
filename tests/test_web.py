@@ -258,3 +258,32 @@ async def test_settings_show_version(client_factory):
     page = (await client.get("/settings")).text
     assert f"Feedler <b>{build_info().version}</b>" in page
     assert "https://github.com/olizimmermann/feedler/commits/main" in page
+
+
+async def test_security_headers_and_no_inline_js(client_factory):
+    client = await client_factory()
+    for path in ("/login", "/static/app.js"):
+        csp = (await client.get(path)).headers["content-security-policy"]
+        assert "script-src 'self'" in csp and "object-src 'none'" in csp and "frame-ancestors 'none'" in csp
+        assert "unsafe-inline" not in csp and "unsafe-eval" not in csp
+    token = await register(client, "csp@example.com")
+    for path in ("/settings", "/settings/interests", "/"):
+        page = (await client.get(path)).text
+        assert not re.search(r"\son[a-z]+\s*=", page), path  # inline handlers are blocked by the CSP
+        assert "<script>" not in page and "javascript:" not in page
+
+    r = await client.post("/saved", data={"csrf_token": token, "url": "https://\tjavascript:alert(1)"})
+    assert r.status_code == 400
+
+
+def test_templates_need_no_unsafe_inline():
+    """The CSP blocks inline scripts, handlers and styles: keep them in app.js / app.css."""
+    from pathlib import Path
+
+    templates = Path(__file__).parents[1] / "app/templates"
+    for path in templates.rglob("*.html"):
+        html = path.read_text()
+        assert not re.search(r"\son[a-z]+\s*=", html), path
+        assert not re.search(r"\sstyle\s*=", html), path
+        assert not re.search(r"<script(?![^>]*\ssrc=)", html), path
+        assert "<style" not in html and "javascript:" not in html and "hx-on" not in html, path

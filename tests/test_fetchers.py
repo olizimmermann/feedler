@@ -1,12 +1,20 @@
-from app.fetchers.base import canonicalize_url
+from app.fetchers.base import canonicalize_url, safe_http_url
 from app.fetchers.reddit import parse_comments, parse_post, parse_rss
 from app.fetchers.rss import parse_entry
 from app.llm.base import LLMError, parse_json
 from app.llm.prompts import InterestSpec, PostSpec, build_classify_prompt
 from app.routers.sources import parse_source
 
+import asyncio
+
 import feedparser
+import httpcore
+import httpx
 import pytest
+
+from app.config import get_settings
+from app.fetchers.article import MAX_HTML_BYTES, fetch_html
+from app.fetchers.net import _PublicOnlyBackend, fetch_client, is_public_ip
 
 
 def test_reddit_public_rss(fixture_bytes):
@@ -54,6 +62,63 @@ def test_rss_entry():
     assert item.body == "Some text"
     assert item.external_id.startswith("rss:")
     assert item.published_at.year == 2024
+
+
+@pytest.mark.parametrize("url, expected", [
+    ("https://ex.com/a?b=1", "https://ex.com/a?b=1"),
+    ("  HTTP://Ex.com/a  ", "HTTP://Ex.com/a"),
+    ("javascript:alert(document.domain)", None),
+    ("JavaScript:alert(1)", None),
+    ("java\tscript:alert(1)", None),
+    ("\x01javascript:alert(1)", None),
+    ("https://ex.com/\nx", None),
+    ("data:text/html,<script>alert(1)</script>", None),
+    ("vbscript:msgbox(1)", None),
+    ("//evil.example/x", None),
+    ("/relative/path", None),
+    ("https:///no-host", None),
+    ("https://[::1", None),
+    ("", None),
+    (None, None),
+])
+def test_safe_http_url(url, expected):
+    assert safe_http_url(url) == expected
+
+
+def test_rss_entry_drops_script_urls():
+    feed = feedparser.parse(
+        b"""<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>
+        <item><title>XSS</title><link>javascript:alert(document.domain)</link><guid>g1</guid>
+        <comments>data:text/html,&lt;script&gt;alert(1)&lt;/script&gt;</comments></item>
+        <item><title>OK</title><link>https://ex.com/b</link><guid>g2</guid>
+        <comments>javascript:alert(1)</comments></item>
+        <item><link>JAVASCRIPT:alert(1)</link><guid>g3</guid></item>
+        </channel></rss>"""
+    )
+    assert feed.entries[0].link == "javascript:alert(document.domain)"  # feedparser passes it through
+    xss, ok, untitled = (parse_entry(e, "https://ex.com/feed") for e in feed.entries)
+    assert xss.url == "https://ex.com/feed" and xss.discussion_url is None
+    assert ok.url == "https://ex.com/b" and ok.discussion_url is None
+    assert untitled is None
+
+
+def test_reddit_post_drops_script_urls():
+    base = {"name": "t3_x", "id": "x", "title": "t", "is_self": False, "created_utc": 1_700_000_000}
+    post = parse_post({**base, "permalink": "/r/a/comments/x/t/", "url": "javascript:alert(1)"})
+    assert post.url == post.discussion_url == "https://www.reddit.com/r/a/comments/x/t/"
+    # A permalink that would move the host off reddit is not a reddit post
+    assert parse_post({**base, "permalink": "@evil.example/x", "url": "https://ex.com"}) is None
+    assert parse_post({**base, "permalink": "//evil.example/x", "url": "https://ex.com"}) is None
+
+    rss = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+      <entry><id>t3_a</id><title>a</title><link href="javascript:alert(1)"/>
+        <content type="html">x</content></entry>
+      <entry><id>t3_b</id><title>b</title><link href="https://www.reddit.com/r/a/comments/b/"/>
+        <content type="html">&lt;a href="javascript:alert(1)"&gt;[link]&lt;/a&gt;</content></entry>
+    </feed>"""
+    items = parse_rss(rss)
+    assert [i.external_id for i in items] == ["reddit:t3_b"]
+    assert items[0].url == "https://www.reddit.com/r/a/comments/b/"
 
 
 def test_canonicalize_url():
@@ -130,3 +195,76 @@ def test_reader_kind_and_comment_lines():
     parsed = parse_comment_lines("[+40] u/a: fixed it\nu/b: same here")
     assert parsed[0] == {"score": "+40", "author": "a", "text": "fixed it"}
     assert parsed[1] == {"score": None, "author": "b", "text": "same here"}
+
+
+@pytest.mark.parametrize("ip, public", [
+    ("93.184.215.14", True), ("2606:2800:21f:cb07:6820:80da:af6b:8b2c", True),
+    ("127.0.0.1", False), ("10.1.2.3", False), ("172.16.0.1", False), ("192.168.1.1", False),
+    ("169.254.169.254", False), ("100.64.0.1", False), ("0.0.0.0", False), ("224.0.0.1", False),
+    ("::1", False), ("fe80::1", False), ("fc00::1", False), ("::ffff:127.0.0.1", False),
+    ("::ffff:169.254.169.254", False), ("2002:7f00:1::", False), ("not-an-ip", False),
+])
+def test_is_public_ip(ip, public):
+    assert is_public_ip(ip) is public
+
+
+class _RecordingBackend(httpcore.AsyncNetworkBackend):
+    def __init__(self):
+        self.dialled = []
+
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        self.dialled.append(host)
+        return "stream"
+
+
+async def test_public_only_backend_dials_the_vetted_address(monkeypatch):
+    answers = {"good.test": ["93.184.215.14"], "rebind.test": ["93.184.215.14", "10.0.0.1"],
+               "meta.test": ["169.254.169.254"]}
+
+    async def getaddrinfo(host, port, **kwargs):
+        return [(0, 0, 0, "", (ip, port)) for ip in answers[host]]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+    inner = _RecordingBackend()
+    backend = _PublicOnlyBackend(inner)
+    assert await backend.connect_tcp("good.test", 443) == "stream"
+    assert inner.dialled == ["93.184.215.14"]  # the IP, so a second lookup can't swap it
+    for host in ("rebind.test", "meta.test"):
+        with pytest.raises(httpcore.ConnectError):
+            await backend.connect_tcp(host, 443)
+    assert inner.dialled == ["93.184.215.14"]
+
+
+async def test_fetch_client_refuses_private_addresses(monkeypatch):
+    async def handle(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/"
+    try:
+        for target in (url, url.replace("127.0.0.1", "localhost")):
+            async with fetch_client() as client:
+                with pytest.raises(httpx.ConnectError):
+                    await client.get(target)
+        monkeypatch.setattr(get_settings(), "fetch_allow_private_addresses", True)
+        async with fetch_client() as client:
+            assert (await client.get(url)).text == "ok"
+    finally:
+        server.close()
+
+
+async def test_fetch_html_stops_at_size_cap():
+    chunk = b"<p>" + b"a" * 65536
+
+    async def stream():
+        for _ in range(MAX_HTML_BYTES // len(chunk) + 50):
+            yield chunk
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, headers={"content-type": "text/html; charset=utf-8"}, content=stream()))
+    async with httpx.AsyncClient(transport=transport) as client:
+        html = await fetch_html(client, "https://ex.com/huge")
+    assert len(html) == MAX_HTML_BYTES

@@ -25,6 +25,24 @@ app.add_middleware(
     same_site="lax",
     https_only=settings_.base_url.startswith("https://"),
 )
+
+
+# Inline scripts, event handler attributes and inline styles are all blocked: keep JS in app.js
+CSP = (
+    "default-src 'self'; img-src 'self' https: data:; script-src 'self'; object-src 'none'; "
+    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", CSP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
+
+
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 for module in (auth, feed, saved, sources, interests, settings, admin):

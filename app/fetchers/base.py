@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -24,6 +25,8 @@ class FetchedItem:
     num_comments: int | None = None
     comments_text: str = ""
     comments_fetched: bool = False
+    # url is a stand-in (e.g. the feed URL for an entry without a usable link): don't dedupe on it
+    url_is_fallback: bool = False
     extra: dict = field(default_factory=dict)
 
 
@@ -34,6 +37,30 @@ class FetchResult:
     last_modified: str | None = None
     not_modified: bool = False
     title: str | None = None
+
+
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def safe_http_url(url: str | None) -> str | None:
+    """The URL if it is an absolute http(s) URL with a host, else None.
+
+    Feed content is untrusted and shared between users: anything else (javascript:, data:,
+    relative or host-less URLs) must never end up in an href.
+    """
+    if not isinstance(url, str):
+        return None
+    url = url.strip()
+    if not url or _CONTROL_RE.search(url):  # browsers drop tabs/newlines, so "java\tscript:" would work
+        return None
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        return None
+    return url
 
 
 def canonicalize_url(url: str) -> str:

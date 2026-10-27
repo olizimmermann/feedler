@@ -161,7 +161,8 @@ Layout: `app/fetchers` (Reddit, RSS, article extraction), `app/llm` (providers a
 - Set a strong `SECRET_KEY`. Session cookies are marked `Secure` automatically when `BASE_URL` starts with `https://`.
 - Put the app behind a TLS-terminating reverse proxy if it's reachable from outside your network.
 - The Atom output feed is protected only by its unguessable token URL.
-- Users can add any feed URL and save any link, and the server fetches them. On a shared deployment that means a user could make the server request hosts on your internal network (SSRF). Close registration after creating the accounts you need, or run the containers on a network that can't reach internal services.
+- Users can add any feed URL and save any link, and the server fetches them. To stop that being used against your internal network (SSRF), those fetches refuse loopback, private and link-local addresses, also after redirects. `FETCH_ALLOW_PRIVATE_ADDRESSES=true` lifts this for feeds on your own network; on a shared deployment, leave it off.
+- Links from feeds are only kept if they are `http(s)` URLs, and every page is served with a strict Content-Security-Policy (no inline scripts or styles).
 
 ## Contributing
 

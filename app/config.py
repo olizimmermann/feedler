@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     reddit_client_id: str = ""
     reddit_client_secret: str = ""
     reddit_user_agent: str = "feedler/0.1 (self-hosted feed filter)"
+    # Allow fetching feeds and articles from loopback/private addresses (off: SSRF protection)
+    fetch_allow_private_addresses: bool = False
 
     default_poll_interval_minutes: int = 15
     item_max_age_days: int = 3

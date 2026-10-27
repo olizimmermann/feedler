@@ -13,6 +13,7 @@ from app.auth import current_user
 from app.config import get_settings
 from app.db import get_db
 from app.fetchers.article import extract_article
+from app.fetchers.net import fetch_client
 from app.fetchers.reddit import RedditFetcher
 from app.llm.backoff import user_llm_status
 from app.pipeline.classify import queue_filter
@@ -177,7 +178,7 @@ async def item_article(request: Request, item_id: int, user: User = Depends(curr
     card = await get_card(db, user, item_id)
     item = card.item
     if item.article_text is None:
-        async with httpx.AsyncClient(headers={"User-Agent": get_settings().reddit_user_agent}) as client:
+        async with fetch_client(headers={"User-Agent": get_settings().reddit_user_agent}) as client:
             item.article_text = await extract_article(client, item.url) or ""
         await db.commit()
     return render(request, "partials/reader_article.html", card=card)

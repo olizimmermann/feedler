@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.fetchers.base import FetchedItem, canonicalize_url
+from app.fetchers.base import FetchedItem, canonicalize_url, safe_http_url
 from app.fetchers.reddit import RedditFetcher
 from app.fetchers.rss import RSSFetcher
 from app.models import Evaluation, Interest, Item, ItemSource, Source, Subscription, UserSettings
@@ -140,6 +140,10 @@ async def upsert_items(db: AsyncSession, source: Source, fetched: list[FetchedIt
     Items are deduplicated by external id and by canonical URL, so the same article
     posted to a subreddit and published in an RSS feed becomes one item with two sources.
     """
+    # Last line of defence for every fetcher: only http(s) URLs may reach an href
+    for f in fetched:
+        f.discussion_url = safe_http_url(f.discussion_url)
+    fetched = [f for f in fetched if safe_http_url(f.url)]
     if not fetched:
         return 0
     now = datetime.now(UTC)
@@ -163,7 +167,7 @@ async def upsert_items(db: AsyncSession, source: Source, fetched: list[FetchedIt
     new_count = 0
     linked: list[int] = []
     for f in fetched:
-        item = by_ext.get(f.external_id) or by_canon.get(canon[f.external_id])
+        item = by_ext.get(f.external_id) or (None if f.url_is_fallback else by_canon.get(canon[f.external_id]))
         if item is None:
             item = Item(
                 external_id=f.external_id,
@@ -183,7 +187,8 @@ async def upsert_items(db: AsyncSession, source: Source, fetched: list[FetchedIt
             db.add(item)
             await db.flush()
             by_ext[f.external_id] = item
-            by_canon[item.canonical_url] = item
+            if not f.url_is_fallback:
+                by_canon[item.canonical_url] = item
             new_count += 1
         elif item.external_id == f.external_id:
             if f.score is not None:
