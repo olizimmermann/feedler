@@ -53,6 +53,9 @@ class UserSettings(Base):
     relevance_threshold: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     comments_top_n: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     votes_since_refine: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Learn from reading behaviour (time spent, links opened) in addition to votes
+    track_reading: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    signals_since_refine: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     user: Mapped[User] = relationship(back_populates="settings")
 
@@ -177,6 +180,25 @@ class Vote(Base):
     value: Mapped[int] = mapped_column(Integer, nullable=False)  # +1 / -1
     note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _now_col()
+
+
+class Engagement(Base):
+    """How a user actually read an item: implicit feedback for the profile, weaker than a vote."""
+
+    __tablename__ = "engagements"
+    __table_args__ = (Index("ix_engagements_user_seen", "user_id", "last_seen_at"),)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
+    opens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # reader page views
+    read_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # active, visible time
+    max_scroll: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # percent of the post seen
+    original_opens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # "open the original" clicks
+    link_clicks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # other outbound links
+    comments_seen: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    counted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # in signals_since_refine
+    first_seen_at: Mapped[datetime] = _now_col()
+    last_seen_at: Mapped[datetime] = _now_col()
 
 
 class SavedItem(Base):

@@ -52,7 +52,7 @@
 
 <section class="panel" id="profile">
   <h2>Preference profile {% if profile %}<span class="muted">v{{ profile.version }} · {{ profile.origin }}{{ ' · locked' if profile.locked }}</span>{% endif %}</h2>
-  <p class="muted">The filter reads this along with your interests. It's rewritten from your votes after every {{ settings.profile_refine_after_votes }} votes and nightly, unless you lock it. You can edit it yourself at any time.</p>
+  <p class="muted">The filter reads this along with your interests. It's rewritten from your votes{{ ' and reading' if us.track_reading }} after every {{ settings.profile_refine_after_votes }} votes and nightly, unless you lock it. You can edit it yourself at any time.</p>
   <form method="post" action="/settings/profile" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <textarea name="text" rows="12" placeholder="Nothing learned yet. Vote on posts, or write your own, e.g.&#10;Wants:&#10;- concrete fixes for MK4 layer shifts&#10;Doesn't want:&#10;- print showcases">{{ profile.text if profile else '' }}</textarea>
@@ -61,7 +61,7 @@
       <button formaction="/settings/profile/refine" title="Rewrite the profile from your votes now"
               onclick="this.textContent='Refining…'">Refine from votes now</button>
       {% if profile %}<button formaction="/settings/profile/lock">{{ 'Unlock' if profile.locked else 'Lock' }}</button>{% endif %}
-      <span class="muted small">{{ us.votes_since_refine }} vote{{ 's' if us.votes_since_refine != 1 }} since last refinement</span>
+      <span class="muted small">{{ us.votes_since_refine }} vote{{ 's' if us.votes_since_refine != 1 }}{% if us.track_reading %} and {{ us.signals_since_refine }} read post{{ 's' if us.signals_since_refine != 1 }}{% endif %} since last refinement</span>
     </div>
   </form>
   {% if history | length > 1 %}
@@ -75,6 +75,23 @@
     </div>
     {% endfor %}
   </details>
+  {% endif %}
+</section>
+
+<section class="panel" id="reading">
+  <h2>Learn from reading</h2>
+  <p class="muted">When this is on, the reader records how long you actively read a post, how far you scroll, whether you open the comments, and which links you open. Posts you clearly read count towards the next refinement (two count as one vote), and the profile model sees recent reading next to your votes. Nothing is sent anywhere else. Data older than 90 days is deleted automatically. The server admin can see it in the database.</p>
+  <form method="post" action="/settings/reading" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label class="row"><input type="checkbox" name="track" value="true" {{ 'checked' if us.track_reading }}> Learn from my reading</label>
+    <button class="primary">Save</button>
+    <span class="muted small">{{ tracked }} post{{ 's' if tracked != 1 }} recorded</span>
+  </form>
+  {% if tracked %}
+  <form method="post" action="/settings/reading/clear" onsubmit="return confirm('Delete your whole reading history?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button class="small">Delete reading history</button>
+  </form>
   {% endif %}
 </section>
 

@@ -1,4 +1,4 @@
-// Feedler UI helpers: keyboard navigation, read tracking, reader navigation.
+// Feedler UI helpers: keyboard navigation, read tracking, reading engagement, reader navigation.
 (function () {
   let current = null;
   const reader = () => document.querySelector("article.reader");
@@ -34,23 +34,101 @@
     if (el) el.click();
   }
 
-  // Mark an item read when its original is opened, without getting in the way of navigation
-  function markRead(link) {
-    const card = link.closest("article.card");
-    if (!link.dataset.readUrl || (card && card.classList.contains("is-read"))) return;
-    if (card) card.classList.add("is-read");
+  function post(url, data) {
     const token = document.querySelector('meta[name="csrf-token"]');
-    fetch(link.dataset.readUrl, {
+    const body = new FormData();
+    for (const [k, v] of Object.entries(data || {})) body.append(k, v);
+    // keepalive lets the request finish while the page is being closed
+    fetch(url, {
       method: "POST",
       headers: { "X-CSRF-Token": token ? token.content : "" },
+      body,
       keepalive: true,
     }).catch(() => {});
+  }
+
+  // Mark an item read when its original is opened, without getting in the way of navigation.
+  // Every open is reported: opening the original is a strong sign of interest.
+  function markRead(link) {
+    const card = link.closest("article.card");
+    if (!link.dataset.readUrl) return;
+    if (card) card.classList.add("is-read");
+    post(link.dataset.readUrl);
   }
 
   for (const type of ["click", "auxclick"]) {
     document.addEventListener(type, (e) => {
       const link = e.target.closest && e.target.closest("a.item-link");
       if (link) markRead(link);
+      else engageLink(e.target.closest && e.target.closest("article.reader a[href]"));
+    });
+  }
+
+  // Reading engagement in the reader: active time, scroll depth, comments, outbound links.
+  // Only runs when the user has "Learn from reading" on (the server renders data-engage-url).
+  const engageUrl = reader() && reader().dataset.engageUrl;
+  const IDLE_MS = 60000; // no input for this long = not reading anymore
+  const FLUSH_MS = 15000;
+  let lastInput = Date.now();
+  let pendingMs = 0;
+  let maxScroll = 0;
+  let sentScroll = 0;
+
+  function engage(data) {
+    if (engageUrl) post(engageUrl, data);
+  }
+
+  function engageLink(link) {
+    if (!link) return;
+    let url;
+    try { url = new URL(link.href, location.href); } catch (_) { return; }
+    if (url.origin !== location.origin) engage({ event: "link" });
+  }
+
+  function scrollDepth() {
+    const el = reader();
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    const seen = window.innerHeight - rect.top;
+    return Math.max(0, Math.min(100, Math.round((seen / Math.max(rect.height, 1)) * 100)));
+  }
+
+  function flush() {
+    const seconds = Math.floor(pendingMs / 1000);
+    if (!seconds && maxScroll <= sentScroll) return;
+    pendingMs -= seconds * 1000;
+    sentScroll = maxScroll;
+    engage({ seconds, scroll: maxScroll });
+  }
+
+  if (engageUrl) {
+    for (const type of ["scroll", "keydown", "pointerdown", "pointermove", "touchstart", "wheel"]) {
+      window.addEventListener(type, () => { lastInput = Date.now(); }, { passive: true });
+    }
+    window.addEventListener("scroll", () => { maxScroll = Math.max(maxScroll, scrollDepth()); }, { passive: true });
+    document.addEventListener("htmx:afterSettle", () => { maxScroll = Math.max(maxScroll, scrollDepth()); });
+    maxScroll = scrollDepth();
+
+    let tick = Date.now();
+    setInterval(() => {
+      const now = Date.now();
+      if (document.visibilityState === "visible" && now - lastInput < IDLE_MS) pendingMs += now - tick;
+      tick = now;
+    }, 1000);
+    setInterval(flush, FLUSH_MS);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+    window.addEventListener("pagehide", flush);
+
+    // Comments count as seen once the loaded list scrolls into view
+    let commentsSeen = false;
+    document.addEventListener("htmx:afterSettle", () => {
+      const list = document.querySelector("#comments ul.comments");
+      if (commentsSeen || !list || !("IntersectionObserver" in window)) return;
+      commentsSeen = true;
+      const seen = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) { engage({ event: "comments" }); seen.disconnect(); }
+      });
+      seen.observe(list);
     });
   }
 

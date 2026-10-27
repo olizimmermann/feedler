@@ -9,16 +9,18 @@ from app.config import Settings
 from app.llm.backoff import first_available, paused_status, record_failure, record_success, status_key
 from app.llm.base import LLMError
 from app.llm.prompts import (
-    PROFILE_SCHEMA, PROFILE_SYSTEM, InterestSpec, VoteSpec, build_profile_prompt, render_profile,
+    PROFILE_SCHEMA, PROFILE_SYSTEM, InterestSpec, ReadingSpec, VoteSpec, build_profile_prompt, render_profile,
 )
 from app.llm.registry import get_provider_chain
-from app.models import Evaluation, Interest, Item, PreferenceProfile, User, UserSettings, Vote
+from app.models import Engagement, Evaluation, Interest, Item, PreferenceProfile, User, UserSettings, Vote
 from app.pipeline.classify import latest_profile
+from app.pipeline.engagement import reading_signal
 from app.pipeline.usage import record_call
 
 log = logging.getLogger(__name__)
 
 VOTES_IN_PROMPT = 60
+READS_IN_PROMPT = 40
 
 
 class ProfileError(Exception):
@@ -40,8 +42,10 @@ async def refine_profile(db: AsyncSession, user: User, settings: Settings) -> Pr
             .limit(VOTES_IN_PROMPT)
         )
     ).all()
-    if not rows:
-        raise ProfileError("Vote on a few items first.")
+    us = await db.get(UserSettings, user.id)
+    reading = await reading_specs(db, user.id) if us.track_reading else []
+    if not rows and not reading:
+        raise ProfileError("Vote on or read a few items first.")
 
     votes = [
         VoteSpec(
@@ -60,9 +64,9 @@ async def refine_profile(db: AsyncSession, user: User, settings: Settings) -> Pr
         current.text if current else None,
         [InterestSpec(i.id, i.name, i.description) for i in interests],
         votes,
+        reading,
     )
 
-    us = await db.get(UserSettings, user.id)
     try:
         chain = get_provider_chain(us, purpose="profile", settings=settings)
     except LLMError as e:
@@ -101,18 +105,56 @@ async def refine_profile(db: AsyncSession, user: User, settings: Settings) -> Pr
     )
     db.add(profile)
     us.votes_since_refine = 0
+    us.signals_since_refine = 0
     await db.commit()
     log.info("user %s: profile v%d (%s)", user.id, profile.version, result.data.get("changes", ""))
     return profile
 
 
+async def reading_specs(db: AsyncSession, user_id: int) -> list[ReadingSpec]:
+    """Recent reading behaviour on posts the user didn't vote on (a vote says more than any behaviour)."""
+    rows = (
+        await db.execute(
+            select(Engagement, Item, Evaluation)
+            .join(Item, Item.id == Engagement.item_id)
+            .outerjoin(Evaluation, (Evaluation.item_id == Engagement.item_id) & (Evaluation.user_id == user_id))
+            .outerjoin(Vote, (Vote.item_id == Engagement.item_id) & (Vote.user_id == user_id))
+            .where(Engagement.user_id == user_id, Vote.item_id.is_(None))
+            .order_by(Engagement.last_seen_at.desc())
+            .limit(READS_IN_PROMPT * 3)
+        )
+    ).all()
+    specs = []
+    for eng, item, ev in rows:
+        signal = reading_signal(eng, item)
+        if signal is None:
+            continue
+        specs.append(ReadingSpec(
+            signal=signal,
+            title=item.title,
+            source=", ".join(s.label for s in item.sources),
+            snippet=item.body,
+            read_seconds=eng.read_seconds,
+            scrolled_pct=eng.max_scroll,
+            opened_original=eng.original_opens,
+            other_links=eng.link_clicks,
+            comments_seen=eng.comments_seen,
+            llm_relevance=ev.relevance if ev else None,
+            llm_reason=ev.reason if ev else None,
+        ))
+        if len(specs) == READS_IN_PROMPT:
+            break
+    return specs
+
+
 async def refine_due(sessionmaker: async_sessionmaker, settings: Settings, min_votes: int | None = None) -> int:
-    """Refine profiles of users with at least `min_votes` new votes (default from settings)."""
+    """Refine profiles of users with at least `min_votes` new votes (default from settings).
+
+    Two clearly read posts count as one vote, since reading is a weaker signal than voting."""
     threshold = settings.profile_refine_after_votes if min_votes is None else min_votes
+    signals = UserSettings.votes_since_refine + UserSettings.signals_since_refine / 2
     async with sessionmaker() as db:
-        user_ids = (
-            await db.scalars(select(UserSettings.user_id).where(UserSettings.votes_since_refine >= max(threshold, 1)))
-        ).all()
+        user_ids = (await db.scalars(select(UserSettings.user_id).where(signals >= max(threshold, 1)))).all()
     done = 0
     for user_id in user_ids:
         async with sessionmaker() as db:

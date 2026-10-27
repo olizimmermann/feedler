@@ -13,6 +13,7 @@ You describe what you want in plain language, for example *"Prusa printer bugs a
 - **Any LLM:** Anthropic (Claude), OpenAI, Google Gemini (including the free tier) or a local model via Ollama. Each user picks their own provider and model.
 - **Reads the comments:** with Reddit API credentials, the LLM also reads the top comments, which is often where the fix is. Comments of relevant posts are re-read after about 2h and 12h.
 - **Learns from your votes:** votes, with an optional note on why, drive an automatically refined **preference profile** that you can view, edit, lock and roll back.
+- **Learns from your reading:** how long you actively read a post, how far you scroll, whether you look at the comments and which links you open are used as a weaker, implicit signal next to your votes. You can switch it off or delete the history in Settings.
 - **Filtered out tab:** see what the LLM rejected, and upvote anything it got wrong.
 - **Save for later:** save feed items or any URL, with tags and notes. The page text is archived and full-text searchable, so it survives link rot.
 - **Patient when the LLM is busy:** overloads and rate limits pause scoring with growing waits. Unscored posts stay queued, and nothing is lost.
@@ -116,6 +117,7 @@ Without credentials, Feedler reads each subreddit's public RSS feed. That feed h
 
 - Every vote increments a counter. After `PROFILE_REFINE_AFTER_VOTES` votes (and nightly for anyone with new votes), the profile model reads your current profile, your interests and your last 60 votes. Each vote includes the filter's earlier score and reason, plus your note if you wrote one. The model then writes a new *Wants / Doesn't want* profile.
 - A vote that disagrees with the filter's score (an upvote on a low score, or a downvote on a high one) is the strongest signal.
+- Reading counts too, unless you turn off **Settings → Learn from reading**. The reader measures active time (only while the tab is visible and you've interacted within the last minute), scroll depth, whether the comments came into view, and outbound link clicks. Opening the original from the feed counts as well. Each post without a vote is labelled *followed* (you opened its links), *read* (you spent at least half its estimated reading time, or read the comments) or *skipped* (opened and left within seconds). Up to 40 recent ones go into the profile prompt as a weaker signal than votes. Two read posts count as one vote towards `PROFILE_REFINE_AFTER_VOTES`, and skips never trigger a refinement on their own. The server caps the time each ping can add by the wall-clock time since the last one, and reading data older than 90 days is deleted nightly.
 - The profile is a new version each time. You can edit it, **Lock** it to stop automatic rewrites, or restore an older version.
 - Posts are scored once, with the profile that is current at that time. The card's *Why?* shows the model and profile version used.
 

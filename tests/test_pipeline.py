@@ -7,10 +7,12 @@ from app.config import Settings
 from app.fetchers.base import FetchedItem
 from app.llm.registry import set_provider_override
 from app.models import (
-    Evaluation, Interest, Item, ItemSource, LLMCall, PreferenceProfile, Source, Subscription, User, UserSettings, Vote,
+    Engagement, Evaluation, Interest, Item, ItemSource, LLMCall, PreferenceProfile, Source, Subscription, User,
+    UserSettings, Vote,
 )
 from app.pipeline.classify import classify_user
 from app.pipeline.ingest import upsert_items
+from app.pipeline.engagement import RETENTION, prune_engagements, reading_signal
 from app.pipeline.profile import ProfileError, refine_due, refine_profile
 from tests.fakes import FakeProvider
 
@@ -278,3 +280,59 @@ async def test_busy_provider_falls_back(db, fakes):
 def test_fallback_defaults():
     s = Settings(default_llm_provider="gemini", default_llm_fallbacks=" Ollama, gemini, nope, ollama")
     assert s.fallback_providers == ["ollama"]
+
+
+def test_reading_signal():
+    item = Item(title="t", body="word " * 400)  # about 100s to read
+    now = datetime.now(UTC)
+    eng = lambda **kw: Engagement(**{"opens": 1, "read_seconds": 0, "max_scroll": 0, "original_opens": 0,
+                                     "link_clicks": 0, "comments_seen": False, "last_seen_at": now, **kw})
+    assert reading_signal(eng(original_opens=1), item) == "followed"
+    assert reading_signal(eng(link_clicks=1), item) == "followed"
+    assert reading_signal(eng(read_seconds=60), item) == "read"
+    assert reading_signal(eng(read_seconds=25, comments_seen=True), item) == "read"
+    assert reading_signal(eng(read_seconds=25), item) is None  # unclear: neither read nor skipped
+    assert reading_signal(eng(read_seconds=3), item) is None  # reader may still be open
+    assert reading_signal(eng(read_seconds=3, last_seen_at=now - timedelta(hours=1)), item) == "skipped"
+
+
+async def test_profile_learns_from_reading(sessionmaker, fake):
+    async with sessionmaker() as db:
+        user = await setup_feed(db, n_items=3)
+        await classify_user(db, user, SETTINGS)
+        items = (await db.scalars(select(Item).order_by(Item.id))).all()
+        old = datetime.now(UTC) - timedelta(hours=1)
+        db.add(Engagement(user_id=user.id, item_id=items[0].id, opens=1, read_seconds=90, max_scroll=100,
+                          last_seen_at=old))
+        db.add(Engagement(user_id=user.id, item_id=items[1].id, opens=1, read_seconds=2, last_seen_at=old))
+        db.add(Engagement(user_id=user.id, item_id=items[2].id, opens=1, original_opens=1, last_seen_at=old))
+        db.add(Vote(user_id=user.id, item_id=items[2].id, value=-1))  # a vote beats behaviour
+        db.add(Engagement(user_id=user.id, item_id=items[3].id, opens=1, read_seconds=1,
+                          last_seen_at=datetime.now(UTC) - RETENTION - timedelta(days=1)))
+        (await db.get(UserSettings, user.id)).signals_since_refine = 19
+        await db.commit()
+
+    # 19 read posts count as 9.5 votes: not due yet; one more vote makes it due
+    assert await refine_due(sessionmaker, Settings(profile_refine_after_votes=10)) == 0
+    async with sessionmaker() as db:
+        (await db.get(UserSettings, user.id)).votes_since_refine = 1
+        await db.commit()
+    assert await refine_due(sessionmaker, Settings(profile_refine_after_votes=10)) == 1
+
+    prompt = fake.prompts[-1]
+    assert "## Reading behaviour" in prompt
+    assert '"behaviour": "read"' in prompt and '"behaviour": "skipped"' in prompt
+    assert '"behaviour": "followed"' not in prompt  # the voted item only shows up as a vote
+    async with sessionmaker() as db:
+        us = await db.get(UserSettings, user.id)
+        assert us.signals_since_refine == 0 and us.votes_since_refine == 0
+        assert await prune_engagements(sessionmaker) == 1
+
+        # Reading alone is enough to refine; with tracking off it is ignored
+        await db.execute(Vote.__table__.delete())
+        await db.commit()
+        assert (await refine_profile(db, await db.get(User, user.id), SETTINGS)).version == 2
+        us.track_reading = False
+        await db.commit()
+        with pytest.raises(ProfileError):
+            await refine_profile(db, await db.get(User, user.id), SETTINGS)

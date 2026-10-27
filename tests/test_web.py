@@ -191,3 +191,60 @@ async def test_llm_fallback_settings(client_factory, sessionmaker):
     page = (await client.get("/settings")).text
     assert re.search(r'<option value="ollama" selected', page)
     assert (await client.get("/")).status_code == 200
+
+
+async def test_reading_engagement(client_factory, sessionmaker):
+    from app.models import Engagement, UserSettings
+
+    alice, bob = await client_factory(), await client_factory()
+    a_token = await register(alice, "read-a@example.com")
+    b_token = await register(bob, "read-b@example.com")
+    await alice.post("/settings/sources", data={"csrf_token": a_token, "value": "r/prusa3d"})
+    async with sessionmaker() as db:
+        a = await db.scalar(select(User).where(User.email == "read-a@example.com"))
+        source = await db.scalar(select(Source))
+        item = Item(external_id="reddit:t3_e", url="https://ex.com/e", canonical_url="https://ex.com/e",
+                    title="Engaging post", body="word " * 400, published_at=datetime.now(UTC))
+        db.add(item)
+        await db.flush()
+        db.add(ItemSource(item_id=item.id, source_id=source.id))
+        db.add(Evaluation(item_id=item.id, user_id=a.id, relevance=20, reason="r", summary="s", model="m"))
+        await db.commit()
+        item_id = item.id
+
+    reader = (await alice.get(f"/items/{item_id}")).text
+    assert f'data-engage-url="/items/{item_id}/engage"' in reader
+    url = f"/items/{item_id}/engage"
+
+    # CSRF, foreign items and unknown events are refused
+    assert (await alice.post(url, data={"seconds": 10})).status_code == 403
+    assert (await bob.post(url, data={"seconds": 10}, headers={"X-CSRF-Token": b_token})).status_code == 404
+    assert (await alice.post(url, data={"event": "x"}, headers={"X-CSRF-Token": a_token})).status_code == 400
+
+    # Time is capped by the wall clock since the last ping, scroll is clamped to 0-100
+    r = await alice.post(url, data={"seconds": 9999, "scroll": 250}, headers={"X-CSRF-Token": a_token})
+    assert r.status_code == 204
+    async with sessionmaker() as db:
+        eng = await db.get(Engagement, (a.id, item_id))
+        assert eng.opens == 1 and eng.read_seconds <= 6 and eng.max_scroll == 100
+        eng.last_seen_at -= timedelta(minutes=5)  # pretend the reader has been open for a while
+        await db.commit()
+    await alice.post(url, data={"seconds": 45}, headers={"X-CSRF-Token": a_token})
+    await alice.post(url, data={"event": "comments"}, headers={"X-CSRF-Token": a_token})
+    await alice.post(f"/items/{item_id}/read", headers={"X-CSRF-Token": a_token})  # opened the original
+    async with sessionmaker() as db:
+        eng = await db.get(Engagement, (a.id, item_id))
+        assert eng.read_seconds >= 45 and eng.comments_seen and eng.original_opens == 1 and eng.counted
+        us = await db.get(UserSettings, a.id)
+        assert us.signals_since_refine == 1  # counted once, not per ping
+
+    # Opting out stops recording and hides the tracker; clearing deletes the history
+    assert "1 post recorded" in (await alice.get("/settings")).text
+    await alice.post("/settings/reading", data={"csrf_token": a_token})
+    assert "data-engage-url" not in (await alice.get(f"/items/{item_id}")).text
+    await alice.post(url, data={"seconds": 30}, headers={"X-CSRF-Token": a_token})
+    async with sessionmaker() as db:
+        assert (await db.get(Engagement, (a.id, item_id))).opens == 1
+    await alice.post("/settings/reading/clear", data={"csrf_token": a_token})
+    async with sessionmaker() as db:
+        assert await db.get(Engagement, (a.id, item_id)) is None

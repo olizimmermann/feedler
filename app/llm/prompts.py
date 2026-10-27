@@ -57,6 +57,13 @@ the post, the filter's earlier reasoning, and optionally the person's own note. 
 low-scored post, or a downvote on a high-scored one, is the strongest signal: the filter was wrong. \
 Update the profile to fix such mistakes.
 
+You may also get their recent reading behaviour on posts they did not vote on. It is implicit and \
+weaker than a vote: "followed" means they opened the original or other links from the post, "read" \
+means they spent real time on it (read_seconds, scrolled_pct, comments_seen), "skipped" means they \
+opened it and left within seconds. The TL;DR may already have answered a skipped post, so a skip is \
+weak evidence on its own; only act on patterns across several posts. A post the filter scored low \
+that they still read or followed is a hint the filter is too strict there.
+
 Keep what is still supported, revise what the votes contradict, and add new patterns only when \
 several votes support them. Return "wants" and "avoid" as lists of short, specific bullet points \
 (at most 10 each, under 250 words in total). Don't restate the interests verbatim. In "changes", \
@@ -155,7 +162,23 @@ class VoteSpec:
     note: str | None
 
 
-def build_profile_prompt(current: str | None, interests: list[InterestSpec], votes: list[VoteSpec]) -> str:
+@dataclass
+class ReadingSpec:
+    signal: str  # followed | read | skipped
+    title: str
+    source: str
+    snippet: str
+    read_seconds: int
+    scrolled_pct: int
+    opened_original: int
+    other_links: int
+    comments_seen: bool
+    llm_relevance: int | None
+    llm_reason: str | None
+
+
+def build_profile_prompt(current: str | None, interests: list[InterestSpec], votes: list[VoteSpec],
+                         reading: list[ReadingSpec] | None = None) -> str:
     vote_lines = []
     for v in votes:
         entry = {
@@ -169,9 +192,28 @@ def build_profile_prompt(current: str | None, interests: list[InterestSpec], vot
         if v.note:
             entry["their_note"] = v.note
         vote_lines.append(json.dumps(entry, ensure_ascii=False))
+    reading_lines = [
+        json.dumps({
+            "behaviour": r.signal,
+            "source": r.source,
+            "title": r.title,
+            "snippet": _truncate(r.snippet, 200),
+            "read_seconds": r.read_seconds,
+            "scrolled_pct": r.scrolled_pct,
+            "opened_original": r.opened_original,
+            "other_links": r.other_links,
+            "comments_seen": r.comments_seen,
+            "filter_score": r.llm_relevance,
+            "filter_reason": r.llm_reason,
+        }, ensure_ascii=False)
+        for r in reading or []
+    ]
     interests_text = "\n".join(f"- {i.name}: {i.description}" for i in interests) or "(none)"
-    return (
+    prompt = (
         f"## Current profile\n{current.strip() if current else '(empty)'}\n\n"
         f"## Stated interests\n{interests_text}\n\n"
-        f"## Recent votes (newest first)\n" + "\n".join(vote_lines)
+        f"## Recent votes (newest first)\n" + ("\n".join(vote_lines) or "(none)")
     )
+    if reading_lines:
+        prompt += "\n\n## Reading behaviour without a vote (newest first, weaker signal)\n" + "\n".join(reading_lines)
+    return prompt
