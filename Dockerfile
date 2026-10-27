@@ -12,6 +12,14 @@ RUN pip install -e ".[dev]"
 
 COPY . .
 
+# Set by CI so the app can show which build is running (Settings → About)
+ARG FEEDLER_COMMIT=""
+ARG FEEDLER_RELEASED_AT=""
+ENV FEEDLER_COMMIT=$FEEDLER_COMMIT \
+    FEEDLER_RELEASED_AT=$FEEDLER_RELEASED_AT
+
+LABEL org.opencontainers.image.revision=$FEEDLER_COMMIT \
+      org.opencontainers.image.created=$FEEDLER_RELEASED_AT
 LABEL org.opencontainers.image.source="https://github.com/olizimmermann/feedler" \
       org.opencontainers.image.description="Self-hosted Reddit and RSS reader filtered by an LLM" \
       org.opencontainers.image.licenses="MIT"

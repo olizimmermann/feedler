@@ -248,3 +248,13 @@ async def test_reading_engagement(client_factory, sessionmaker):
     await alice.post("/settings/reading/clear", data={"csrf_token": a_token})
     async with sessionmaker() as db:
         assert await db.get(Engagement, (a.id, item_id)) is None
+
+
+async def test_settings_show_version(client_factory):
+    from app.version import build_info
+
+    client = await client_factory()
+    await register(client, "ver@example.com")
+    page = (await client.get("/settings")).text
+    assert f"Feedler <b>{build_info().version}</b>" in page
+    assert "https://github.com/olizimmermann/feedler/commits/main" in page
