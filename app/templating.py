@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.auth import csrf_token
 from app.config import get_settings
+from app.version import REPO_URL, build_info
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
@@ -16,6 +17,8 @@ ASSET_VERSION = hashlib.sha256(
     b"".join((_STATIC / name).read_bytes() for name in ("app.css", "app.js"))
 ).hexdigest()[:10]
 templates.env.globals["asset_v"] = ASSET_VERSION
+templates.env.globals["build"] = build_info()
+templates.env.globals["repo_url"] = REPO_URL
 
 
 def timeago(value: datetime | None) -> str:

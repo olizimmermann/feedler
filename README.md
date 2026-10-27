@@ -66,6 +66,8 @@ docker compose up -d     # database migrations run automatically on start
 
 Use `docker compose up -d --build` instead to run your own local changes.
 
+**Settings → About** shows the running version, the commit it was built from (linked to GitHub) and its release time. Images built locally show *development build*.
+
 ### Automatic updates
 
 Add this to `.env` on your server:

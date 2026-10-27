@@ -125,4 +125,16 @@
   </div>
   <p class="muted small mobile-only">Tip: add Feedler to your home screen (Share → Add to Home Screen) to use it like an app.</p>
 </section>
+
+<section class="panel" id="about">
+  <h2>About</h2>
+  <p>Feedler <b>{{ build.version }}</b>
+    {% if build.commit %}· build <a class="mono" href="{{ build.commit_url }}" target="_blank" rel="noopener">{{ build.short_commit }}</a>{% else %}· development build{% endif %}
+    {% if build.released_at %}· released <time datetime="{{ build.released_at.isoformat() }}" title="{{ build.released_at.strftime('%Y-%m-%d %H:%M UTC') }}">{{ build.released_at.strftime('%Y-%m-%d %H:%M UTC') }}</time>{% endif %}</p>
+  <p class="muted small">
+    <a href="{{ repo_url }}/commits/main" target="_blank" rel="noopener">Latest changes</a> ·
+    <a href="{{ repo_url }}/releases" target="_blank" rel="noopener">Releases</a> ·
+    <a href="{{ repo_url }}" target="_blank" rel="noopener">GitHub</a>
+  </p>
+</section>
 {% endblock %}
