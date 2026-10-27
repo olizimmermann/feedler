@@ -23,6 +23,8 @@ def test_build_info_from_ci(info):
     assert b.commit_url == "https://github.com/olizimmermann/feedler/commit/9bfa2d39412b25c24f5b58444e087e581e70042a"
     assert b.released_at == datetime(2026, 10, 27, 18, 2, 11, tzinfo=UTC)
     assert b.label.endswith("(9bfa2d3)")
+    # Git gives the committer's offset (as CI does); shown in UTC
+    assert info(b.commit, "2026-10-27T21:19:33+01:00").released_at.isoformat() == "2026-10-27T20:19:33+00:00"
 
 
 def test_build_info_rejects_junk(info):

@@ -3,7 +3,7 @@
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 
@@ -42,6 +42,6 @@ def build_info() -> BuildInfo:
         released_at = datetime.fromisoformat(os.environ.get("FEEDLER_RELEASED_AT", "").strip())
     except ValueError:
         released_at = None
-    if released_at and released_at.tzinfo is None:
-        released_at = None
+    # Git reports the committer's local offset; the UI shows UTC
+    released_at = released_at.astimezone(UTC) if released_at and released_at.tzinfo else None
     return BuildInfo(pkg_version, commit, released_at)
