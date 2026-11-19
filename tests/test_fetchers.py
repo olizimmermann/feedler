@@ -1,5 +1,5 @@
 from app.fetchers.base import canonicalize_url, safe_http_url
-from app.fetchers.reddit import parse_comments, parse_post, parse_rss
+from app.fetchers.reddit import parse_comments, parse_post
 from app.fetchers.rss import parse_entry
 from app.llm.base import LLMError, parse_json
 from app.llm.prompts import InterestSpec, PostSpec, build_classify_prompt
@@ -17,15 +17,19 @@ from app.fetchers.article import MAX_HTML_BYTES, fetch_html
 from app.fetchers.net import _PublicOnlyBackend, fetch_client, is_public_ip
 
 
-def test_reddit_public_rss(fixture_bytes):
-    items = parse_rss(fixture_bytes("reddit_prusa3d.rss"))
-    assert len(items) == 10
-    first = items[0]
-    assert first.external_id.startswith("reddit:t3_")
-    assert first.discussion_url.startswith("https://www.reddit.com/r/prusa3d/comments/")
-    assert "submitted by" not in first.body
-    assert first.author and not first.author.startswith("/u/")
-    assert first.published_at.tzinfo is not None
+async def test_reddit_without_credentials_sends_nothing():
+    from app.config import Settings
+    from app.fetchers.reddit import RedditCredentialsRequired, RedditFetcher
+
+    def handler(request):  # the public .rss feeds are gone: no request may leave without credentials
+        raise AssertionError(f"unexpected request to {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        fetcher = RedditFetcher(Settings(reddit_client_id="", reddit_client_secret=""), client=client)
+        with pytest.raises(RedditCredentialsRequired, match="REDDIT_CLIENT_ID"):
+            await fetcher.fetch("prusa3d")
+        with pytest.raises(RedditCredentialsRequired):
+            await fetcher.fetch_comments("abc", 5)
 
 
 def test_reddit_json_post_and_comments():
@@ -110,16 +114,6 @@ def test_reddit_post_drops_script_urls():
     assert parse_post({**base, "permalink": "@evil.example/x", "url": "https://ex.com"}) is None
     assert parse_post({**base, "permalink": "//evil.example/x", "url": "https://ex.com"}) is None
 
-    rss = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
-      <entry><id>t3_a</id><title>a</title><link href="javascript:alert(1)"/>
-        <content type="html">x</content></entry>
-      <entry><id>t3_b</id><title>b</title><link href="https://www.reddit.com/r/a/comments/b/"/>
-        <content type="html">&lt;a href="javascript:alert(1)"&gt;[link]&lt;/a&gt;</content></entry>
-    </feed>"""
-    items = parse_rss(rss)
-    assert [i.external_id for i in items] == ["reddit:t3_b"]
-    assert items[0].url == "https://www.reddit.com/r/a/comments/b/"
-
 
 def test_canonicalize_url():
     a = canonicalize_url("http://www.Example.com/post/?utm_source=x&b=2&a=1#frag")
@@ -158,14 +152,6 @@ def test_classify_prompt_scoping_and_truncation():
     assert '<post id="7" source="r/prusa3d">' in prompt
     assert "(none yet)" in prompt
     assert len(prompt) < 1500
-
-
-def test_reddit_public_comments_rss(fixture_bytes):
-    from app.fetchers.reddit import parse_comments_rss
-
-    lines = parse_comments_rss(fixture_bytes("reddit_comments.rss"), top_n=5).splitlines()
-    assert 1 <= len(lines) <= 5
-    assert all(line.startswith("u/example_user") for line in lines)  # the post itself (t3) is skipped
 
 
 def test_html_to_text_paragraphs():

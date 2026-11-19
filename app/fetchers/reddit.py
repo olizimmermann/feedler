@@ -1,29 +1,36 @@
 """Reddit fetcher.
 
-With REDDIT_CLIENT_ID/SECRET set, uses application-only OAuth against oauth.reddit.com
-(higher rate limits, scores, comments). Otherwise falls back to the public RSS feed
-(reddit blocks unauthenticated JSON requests) and skips comments.
+Uses application-only OAuth against oauth.reddit.com, so REDDIT_CLIENT_ID/SECRET are
+required. Reddit shut down its public .rss feeds on 2026-11-13 (they answer 404 now) and
+blocks unauthenticated JSON, so there is no credential-free way to read a subreddit.
 """
 
-import calendar
 import logging
-import re
 import time
 from datetime import UTC, datetime
 
-import feedparser
 import httpx
 
 from app.config import Settings
 from app.fetchers.base import FetchedItem, FetchResult, get_with_backoff, safe_http_url
 from app.fetchers.net import fetch_client
-from app.fetchers.rss import html_to_text
 
 log = logging.getLogger(__name__)
 
 PUBLIC_BASE = "https://www.reddit.com"
 OAUTH_BASE = "https://oauth.reddit.com"
 COMMENT_CHAR_LIMIT = 4000  # the LLM prompt has its own, smaller budget
+NO_CREDENTIALS = (
+    "Reddit shut down its public RSS feeds (13 Nov 2026). Subreddits now need Reddit API "
+    "credentials: set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env."
+)
+
+
+class RedditCredentialsRequired(httpx.HTTPError):
+    """No API credentials configured; raised before any request is sent."""
+
+    def __init__(self) -> None:
+        super().__init__(NO_CREDENTIALS)
 
 
 class RedditFetcher:
@@ -44,7 +51,7 @@ class RedditFetcher:
 
     async def _auth_headers(self) -> dict[str, str]:
         if not self.oauth:
-            return {}
+            raise RedditCredentialsRequired
         if not self._token or time.time() > self._token_expires - 60:
             resp = await self.client.post(
                 f"{PUBLIC_BASE}/api/v1/access_token",
@@ -65,23 +72,9 @@ class RedditFetcher:
         return resp.json()
 
     async def fetch(self, subreddit: str) -> FetchResult:
-        if not self.oauth:
-            resp = await get_with_backoff(self.client, f"{PUBLIC_BASE}/r/{subreddit}/new/.rss", params={"limit": 50})
-            resp.raise_for_status()
-            return FetchResult(items=parse_rss(resp.content))
         data = await self._get_json(f"/r/{subreddit}/new", {"limit": 50})
         items = [parse_post(child["data"]) for child in data["data"]["children"] if child.get("kind") == "t3"]
         return FetchResult(items=[i for i in items if i is not None])
-
-    async def fetch_comments_for_reader(self, post_id: str, permalink: str, top_n: int) -> str:
-        """Comments for one post a reader just opened: API if configured, else the public RSS."""
-        if self.oauth:
-            return await self.fetch_comments(post_id, top_n)
-        resp = await get_with_backoff(
-            self.client, f"{permalink.rstrip('/')}/.rss", params={"sort": "top", "limit": top_n}, retries=1
-        )
-        resp.raise_for_status()
-        return parse_comments_rss(resp.content, top_n)
 
     async def fetch_comments(self, post_id: str, top_n: int) -> str:
         data = await self._get_json(f"/comments/{post_id}", {"sort": "top", "limit": top_n, "depth": 1})
@@ -127,59 +120,6 @@ def parse_comments(data: list, top_n: int) -> str:
             continue
         text = " ".join(c.get("body", "").split())[:COMMENT_CHAR_LIMIT]
         lines.append(f"[{c.get('score', 0):+d}] u/{c.get('author', '?')}: {text}")
-        if len(lines) >= top_n:
-            break
-    return "\n".join(lines)
-
-
-_TRAILER_RE = re.compile(r"&#32;\s*submitted by.*$", re.DOTALL)
-_LINK_RE = re.compile(r'<a href="([^"]+)">\[link\]</a>')
-
-
-def parse_rss(content: bytes) -> list[FetchedItem]:
-    """Parse reddit's public /new/.rss feed (no scores or comment counts there)."""
-    items = []
-    for e in feedparser.parse(content).entries:
-        post_id = e.get("id", "")
-        if not post_id.startswith("t3_"):
-            continue
-        html = e.content[0].value if e.get("content") else e.get("summary", "")
-        link = _LINK_RE.search(html)
-        permalink = safe_http_url(e.get("link"))
-        if not permalink:
-            continue
-        url = (safe_http_url(link.group(1)) if link else None) or permalink
-        body = html_to_text(_TRAILER_RE.sub("", html), paragraphs=True)
-        if url != permalink and not body:
-            body = f"[link post to {url}]"
-        ts = e.get("published_parsed") or e.get("updated_parsed")
-        items.append(
-            FetchedItem(
-                external_id=f"reddit:{post_id}",
-                url=url,
-                discussion_url=permalink,
-                title=e.get("title", "").strip(),
-                body=body,
-                author=(e.get("author") or "").removeprefix("/u/") or None,
-                published_at=datetime.fromtimestamp(calendar.timegm(ts), tz=UTC) if ts else datetime.now(UTC),
-                extra={"id": post_id.removeprefix("t3_")},
-            )
-        )
-    return items
-
-
-def parse_comments_rss(content: bytes, top_n: int) -> str:
-    """Comments from a post's public .rss (no scores; replies are included, flattened)."""
-    lines = []
-    for e in feedparser.parse(content).entries:
-        if not e.get("id", "").startswith("t1_"):
-            continue
-        html = e.content[0].value if e.get("content") else e.get("summary", "")
-        text = html_to_text(html)[:COMMENT_CHAR_LIMIT]
-        if not text or text in ("[deleted]", "[removed]"):
-            continue
-        author = (e.get("author") or "?").removeprefix("/u/")
-        lines.append(f"u/{author}: {text}")
         if len(lines) >= top_n:
             break
     return "\n".join(lines)

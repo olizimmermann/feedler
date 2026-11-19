@@ -27,7 +27,7 @@ async def main() -> None:
     if settings.provider_configured("ollama"):
         await ensure_models(settings.ollama_base_url, {settings.ollama_model, settings.ollama_profile_model})
     if not settings.reddit_oauth:
-        log.warning("No Reddit API credentials: using public endpoints, comments disabled")
+        log.warning("No Reddit API credentials: subreddits cannot be fetched (Reddit shut down its public RSS feeds)")
 
     # Classification runs right after each poll (one job, so batches are never scored twice)
     async def ingest_then_classify():

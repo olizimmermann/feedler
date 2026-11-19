@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.fetchers.article import extract_article
 from app.fetchers.net import fetch_client
-from app.fetchers.reddit import RedditFetcher
+from app.fetchers.reddit import RedditCredentialsRequired, RedditFetcher
 from app.llm.backoff import user_llm_status
 from app.pipeline.classify import queue_filter
 from app.pipeline.engagement import EVENTS, record_activity, record_open
@@ -192,12 +192,14 @@ async def item_comments(request: Request, item_id: int, user: User = Depends(cur
     error = None
     if item.external_id.startswith("reddit:") and item.discussion_url and not item.comments_text:
         try:
-            item.comments_text = await reddit_fetcher().fetch_comments_for_reader(
-                item.external_id.removeprefix("reddit:t3_"), item.discussion_url, user.settings.comments_top_n or 10
+            item.comments_text = await reddit_fetcher().fetch_comments(
+                item.external_id.removeprefix("reddit:t3_"), user.settings.comments_top_n or 10
             )
             item.comments_fetched_at = datetime.now(UTC)
             item.comments_fetch_count = max(item.comments_fetch_count, 1)
             await db.commit()
+        except RedditCredentialsRequired:
+            error = "Comments need Reddit API credentials, which this server doesn't have."
         except httpx.HTTPError:
             error = "Reddit didn't answer right now. Try again in a minute."
     return render(request, "partials/reader_comments.html", card=card, comments=parse_comment_lines(item.comments_text),

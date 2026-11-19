@@ -121,7 +121,7 @@ async def test_reader_flow(client_factory, sessionmaker, monkeypatch):
         return "Full article text.\n\nSecond paragraph."
 
     class FakeReddit:
-        async def fetch_comments_for_reader(self, post_id, permalink, top_n):
+        async def fetch_comments(self, post_id, top_n):
             return "u/helper: Update the firmware, that fixed it"
 
     monkeypatch.setattr("app.routers.feed.extract_article", fake_extract)
