@@ -11,7 +11,7 @@ You describe what you want in plain language, for example *"Prusa printer bugs a
 
 - **Sources:** Reddit (subreddits) and RSS/Atom feeds, with OPML import. The same link arriving from several sources is merged into one item.
 - **Any LLM:** Anthropic (Claude), OpenAI, Google Gemini (including the free tier) or a local model via Ollama. Each user picks their own provider and model.
-- **Reads the comments:** with Reddit API credentials, the LLM also reads the top comments, which is often where the fix is. Comments of relevant posts are re-read after about 2h and 12h.
+- **Reads the comments:** the LLM also reads the top comments, which is often where the fix is. Comments of relevant posts are re-read after about 2h and 12h.
 - **Learns from your votes:** votes, with an optional note on why, drive an automatically refined **preference profile** that you can view, edit, lock and roll back.
 - **Learns from your reading:** how long you actively read a post, how far you scroll, whether you look at the comments and which links you open are used as a weaker, implicit signal next to your votes. You can switch it off or delete the history in Settings.
 - **Filtered out tab:** see what the LLM rejected, and upvote anything it got wrong.
@@ -106,14 +106,15 @@ docker compose --profile ollama up -d
 
 The model is downloaded automatically the first time it's needed. That can take a few minutes, and posts are scored once it's ready. Models of 7B and up give noticeably better scores and profiles than 3B models. To use an Ollama server that is already running on the host instead, set `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1`.
 
-## Reddit API credentials (recommended)
+## Reddit API credentials (required for subreddits)
 
-Without credentials, Feedler reads each subreddit's public RSS feed. That feed has no scores and no comments, and Reddit blocks unauthenticated JSON requests. To enable comments:
+Reddit shut down its public RSS feeds on 13 November 2026 and blocks unauthenticated JSON requests, so subreddits can only be read through the Reddit API. Without credentials, subreddit sources show an error and only RSS/Atom feeds of other sites are fetched.
 
-1. Go to <https://www.reddit.com/prefs/apps> and click **create another app…**
-2. Choose type **script**, and use any redirect URI (e.g. `http://localhost`).
-3. Put the client ID (the string under the app name) and the secret into `.env` as `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`, and set a descriptive `REDDIT_USER_AGENT` with a contact address.
-4. `docker compose up -d worker` to restart the worker.
+Reddit is also closing the public Data API: no new access requests since 31 October 2026, unregistered apps start losing access on 12 January 2027, and the rest follows in March 2027. Credentials you already have keep working until then; register the app at <https://developers.reddit.com/app-registration> to stay on the later date.
+
+1. Go to <https://www.reddit.com/prefs/apps> and open your existing **script** app. Creating a new one (**create another app…**, type **script**, any redirect URI such as `http://localhost`) may no longer be possible.
+2. Put the client ID (the string under the app name) and the secret into `.env` as `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`, and set a descriptive `REDDIT_USER_AGENT` with a contact address.
+3. `docker compose up -d worker` to restart the worker.
 
 ## How the learning works
 

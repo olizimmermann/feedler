@@ -14,7 +14,7 @@
 {% endif %}
 
 {% if not settings.reddit_oauth %}
-<p class="notice">Reddit runs in <b>public mode</b> because no API credentials are configured. Posts are fetched without comments, so fixes posted as replies won't be seen. Add <code>REDDIT_CLIENT_ID</code> and <code>REDDIT_CLIENT_SECRET</code> to <code>.env</code> to enable comments.</p>
+<p class="notice"><b>Subreddits can't be fetched</b>: Reddit shut down its public RSS feeds on 13 Nov 2026 and no API credentials are configured. Add <code>REDDIT_CLIENT_ID</code> and <code>REDDIT_CLIENT_SECRET</code> to <code>.env</code>. RSS feeds from other sites are not affected.</p>
 {% endif %}
 
 <section class="panel">
